@@ -114,7 +114,7 @@ class BenchmarkApp:
         cmap_frame.pack(pady=10)
         tk.Label(cmap_frame, text="Colormap:").pack(side=tk.LEFT)
         self.cmap_var = tk.StringVar(value=self.current['colormap'])
-        cmaps = ttk.Combobox(cmap_frame, textvariable=self.cmap_var, values=['viridis', 'magma', 'plasma', 'inferno', 'gray'], width=8)
+        cmaps = ttk.Combobox(cmap_frame, textvariable=self.cmap_var, values=['viridis', 'magma', 'plasma', 'inferno', 'gray', 'turbo', 'jet', 'rainbow', 'cubehelix', 'gnuplot'], width=10)
         cmaps.pack(side=tk.LEFT)
         
         # Colorbar min max
@@ -192,26 +192,26 @@ class BenchmarkApp:
     def update_plot(self):
         try:
             self.update_current_from_inputs(include_sim_time=False)
-        except ValueError:
-            return
-
-        try:
+            # Validate colorbar min and max
+            if self.current['colorbar_min'].strip():
+                float(self.current['colorbar_min'])
+            if self.current['colorbar_max'].strip():
+                float(self.current['colorbar_max'])
             self.compute_data()
-        except ValueError:
-            return
-
-        vmin = None
-        vmax = None
-        try:
-            vmin = float(self.current['colorbar_min'])
-        except (ValueError, TypeError):
             vmin = None
-        try:
-            vmax = float(self.current['colorbar_max'])
-        except (ValueError, TypeError):
             vmax = None
-
-        self.draw_data(vmin=vmin, vmax=vmax)
+            try:
+                vmin = float(self.current['colorbar_min'])
+            except (ValueError, TypeError):
+                vmin = None
+            try:
+                vmax = float(self.current['colorbar_max'])
+            except (ValueError, TypeError):
+                vmax = None
+            self.draw_data(vmin=vmin, vmax=vmax)
+            self.status_label.config(text="Plot updated", fg="green")
+        except ValueError:
+            self.status_label.config(text="Invalid plot parameters", fg="red")
 
     def _advance_progress(self):
         elapsed = time.time() - self.sim_start_time
@@ -240,7 +240,7 @@ class BenchmarkApp:
         self.draw_data()
         self.progress_bar['value'] = 100
         self.progress_percent_label.config(text="100%")
-        self.status_label.config(text="Simulation completed!", fg="green")
+        self.status_label.config(text="Simulation completed", fg="green")
         self.hide_progress()
 
     def show_progress(self):
