@@ -15,6 +15,7 @@ class BenchmarkApp:
         self.root.title("Ishigami Function Simulator")
         self.root.resizable(True, True)  # Make window resizable
         self.root.state('zoomed')  # Start maximized/fullscreen-like on Windows
+        self.root.config(bg="white")  # White background
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)  # Handle window close
         
         self.defaults = {
@@ -41,126 +42,130 @@ class BenchmarkApp:
         self.root.grid_columnconfigure(1, weight=1)
         
         # Left Panel: Inputs
-        left_frame = tk.Frame(root)
+        left_frame = tk.Frame(root, bg="white")
         left_frame.config(width=250)  # Fixed width to prevent expansion
         left_frame.grid(row=0, column=0, sticky='ns')
         
-        tk.Label(left_frame, text="Ishigami Function", font=("Arial", 14, "bold")).pack(pady=10)
+        tk.Label(left_frame, text="Ishigami Function", font=("Arial", 14, "bold"), bg="white").pack(pady=10)
         
         # LaTeX formula using matplotlib
-        self.formula_fig = plt.Figure(figsize=(2.5, 0.5))
+        self.formula_fig = plt.Figure(figsize=(2.5, 0.5), facecolor='white')
         self.formula_ax = self.formula_fig.add_subplot(111)
         self.formula_ax.text(0.5, 0.5, r'$y = \sin(x_1) + a \cdot \sin^2(x_2) + b \cdot x_3^4 \cdot \sin(x_1)$', fontsize=9, ha='center', va='center')
         self.formula_ax.set_xlim(0, 1)
         self.formula_ax.set_ylim(0, 1)
         self.formula_ax.axis('off')
         # Match background color
-        self.formula_fig.set_facecolor('#f0f0f0')
-        self.formula_ax.set_facecolor('#f0f0f0')
+        self.formula_fig.set_facecolor('white')
+        self.formula_ax.set_facecolor('white')
         self.formula_canvas = FigureCanvasTkAgg(self.formula_fig, master=left_frame)
         self.formula_canvas.get_tk_widget().pack(pady=(0, 0))
         
-        tk.Label(left_frame, text="Function Parameters", font=("Arial", 14, "bold")).pack(pady=4)
+        tk.Label(left_frame, text="Function Parameters", font=("Arial", 14, "bold"), bg="white").pack(pady=4)
         
         self.vars = {}
         for param in ['x1', 'x2', 'x3']:
-            param_frame = tk.Frame(left_frame)
+            param_frame = tk.Frame(left_frame, bg="white")
             param_frame.pack(pady=5)
-            tk.Label(param_frame, text=f"{param}:").pack(side=tk.LEFT)
+            tk.Label(param_frame, text=f"{param}:", bg="white").pack(side=tk.LEFT)
             var = tk.StringVar(value=str(self.current[param]))
-            tk.Entry(param_frame, textvariable=var, width=10).pack(side=tk.LEFT)
+            tk.Entry(param_frame, textvariable=var, width=10, bg="white").pack(side=tk.LEFT)
             self.vars[param] = var
             
-        tk.Label(left_frame, text="Plot Parameters", font=("Arial", 14, "bold")).pack(pady=(15, 10))
+        tk.Label(left_frame, text="Plot Parameters", font=("Arial", 14, "bold"), bg="white").pack(pady=(15, 10))
         
-        a_min_frame = tk.Frame(left_frame)
+        a_min_frame = tk.Frame(left_frame, bg="white")
         a_min_frame.pack(pady=5)
-        tk.Label(a_min_frame, text="a min:").pack(side=tk.LEFT)
+        tk.Label(a_min_frame, text="a min:", bg="white").pack(side=tk.LEFT)
         self.a_min_var = tk.StringVar(value=str(self.current['a_min']))
-        tk.Entry(a_min_frame, textvariable=self.a_min_var, width=10).pack(side=tk.LEFT, padx=(5, 0))
+        tk.Entry(a_min_frame, textvariable=self.a_min_var, width=10, bg="white").pack(side=tk.LEFT, padx=(5, 0))
         
-        a_max_frame = tk.Frame(left_frame)
+        a_max_frame = tk.Frame(left_frame, bg="white")
         a_max_frame.pack(pady=5)
-        tk.Label(a_max_frame, text="a max:").pack(side=tk.LEFT)
+        tk.Label(a_max_frame, text="a max:", bg="white").pack(side=tk.LEFT)
         self.a_max_var = tk.StringVar(value=str(self.current['a_max']))
-        tk.Entry(a_max_frame, textvariable=self.a_max_var, width=10).pack(side=tk.LEFT, padx=(5, 0))
+        tk.Entry(a_max_frame, textvariable=self.a_max_var, width=10, bg="white").pack(side=tk.LEFT, padx=(5, 0))
         
-        b_min_frame = tk.Frame(left_frame)
+        b_min_frame = tk.Frame(left_frame, bg="white")
         b_min_frame.pack(pady=5)
-        tk.Label(b_min_frame, text="b min:").pack(side=tk.LEFT)
+        tk.Label(b_min_frame, text="b min:", bg="white").pack(side=tk.LEFT)
         self.b_min_var = tk.StringVar(value=str(self.current['b_min']))
-        tk.Entry(b_min_frame, textvariable=self.b_min_var, width=10).pack(side=tk.LEFT, padx=(5, 0))
+        tk.Entry(b_min_frame, textvariable=self.b_min_var, width=10, bg="white").pack(side=tk.LEFT, padx=(5, 0))
         
-        b_max_frame = tk.Frame(left_frame)
+        b_max_frame = tk.Frame(left_frame, bg="white")
         b_max_frame.pack(pady=5)
-        tk.Label(b_max_frame, text="b max:").pack(side=tk.LEFT)
+        tk.Label(b_max_frame, text="b max:", bg="white").pack(side=tk.LEFT)
         self.b_max_var = tk.StringVar(value=str(self.current['b_max']))
-        tk.Entry(b_max_frame, textvariable=self.b_max_var, width=10).pack(side=tk.LEFT, padx=(5, 0))
+        tk.Entry(b_max_frame, textvariable=self.b_max_var, width=10, bg="white").pack(side=tk.LEFT, padx=(5, 0))
         
-        a_bins_frame = tk.Frame(left_frame)
+        a_bins_frame = tk.Frame(left_frame, bg="white")
         a_bins_frame.pack(pady=5)
-        tk.Label(a_bins_frame, text="a bins:").pack(side=tk.LEFT)
+        tk.Label(a_bins_frame, text="a bins:", bg="white").pack(side=tk.LEFT)
         self.a_bins_var = tk.StringVar(value=str(self.current['a_bins']))
-        tk.Entry(a_bins_frame, textvariable=self.a_bins_var, width=10).pack(side=tk.LEFT, padx=(5, 0))
+        tk.Entry(a_bins_frame, textvariable=self.a_bins_var, width=10, bg="white").pack(side=tk.LEFT, padx=(5, 0))
         
-        b_bins_frame = tk.Frame(left_frame)
+        b_bins_frame = tk.Frame(left_frame, bg="white")
         b_bins_frame.pack(pady=5)
-        tk.Label(b_bins_frame, text="b bins:").pack(side=tk.LEFT)
+        tk.Label(b_bins_frame, text="b bins:", bg="white").pack(side=tk.LEFT)
         self.b_bins_var = tk.StringVar(value=str(self.current['b_bins']))
-        tk.Entry(b_bins_frame, textvariable=self.b_bins_var, width=10).pack(side=tk.LEFT, padx=(5, 0))
+        tk.Entry(b_bins_frame, textvariable=self.b_bins_var, width=10, bg="white").pack(side=tk.LEFT, padx=(5, 0))
         
         # Colormap
-        cmap_frame = tk.Frame(left_frame)
+        cmap_frame = tk.Frame(left_frame, bg="white")
         cmap_frame.pack(pady=10)
-        tk.Label(cmap_frame, text="Colormap:").pack(side=tk.LEFT)
+        tk.Label(cmap_frame, text="Colormap:", bg="white").pack(side=tk.LEFT)
         self.cmap_var = tk.StringVar(value=self.current['colormap'])
         cmaps = ttk.Combobox(cmap_frame, textvariable=self.cmap_var, values=['viridis', 'magma', 'plasma', 'inferno', 'gray', 'turbo', 'jet', 'rainbow', 'cubehelix', 'gnuplot'], width=10)
         cmaps.pack(side=tk.LEFT)
         
         # Colorbar min max
-        min_frame = tk.Frame(left_frame)
+        min_frame = tk.Frame(left_frame, bg="white")
         min_frame.pack(pady=5)
-        tk.Label(min_frame, text="Colorbar min:").pack(side=tk.LEFT)
+        tk.Label(min_frame, text="Colorbar min:", bg="white").pack(side=tk.LEFT)
         self.min_var = tk.StringVar()
-        tk.Entry(min_frame, textvariable=self.min_var, width=10).pack(side=tk.LEFT)
+        tk.Entry(min_frame, textvariable=self.min_var, width=10, bg="white").pack(side=tk.LEFT)
         
-        max_frame = tk.Frame(left_frame)
+        max_frame = tk.Frame(left_frame, bg="white")
         max_frame.pack(pady=5)
-        tk.Label(max_frame, text="Colorbar max:").pack(side=tk.LEFT)
+        tk.Label(max_frame, text="Colorbar max:", bg="white").pack(side=tk.LEFT)
         self.max_var = tk.StringVar(value=self.current['colorbar_max'])
-        tk.Entry(max_frame, textvariable=self.max_var, width=10).pack(side=tk.LEFT)
+        tk.Entry(max_frame, textvariable=self.max_var, width=10, bg="white").pack(side=tk.LEFT)
         
-        sim_min_frame = tk.Frame(left_frame)
+        sim_min_frame = tk.Frame(left_frame, bg="white")
         sim_min_frame.pack(pady=5)
-        tk.Label(sim_min_frame, text="Simulation time min (s):").pack(side=tk.LEFT)
+        tk.Label(sim_min_frame, text="Simulation time min (s):", bg="white").pack(side=tk.LEFT)
         self.sim_time_min_var = tk.StringVar(value=str(self.current['sim_time_min']))
-        tk.Entry(sim_min_frame, textvariable=self.sim_time_min_var, width=10).pack(side=tk.LEFT, padx=(5, 0))
+        tk.Entry(sim_min_frame, textvariable=self.sim_time_min_var, width=10, bg="white").pack(side=tk.LEFT, padx=(5, 0))
         
-        sim_max_frame = tk.Frame(left_frame)
+        sim_max_frame = tk.Frame(left_frame, bg="white")
         sim_max_frame.pack(pady=5)
-        tk.Label(sim_max_frame, text="Simulation time max (s):").pack(side=tk.LEFT)
+        tk.Label(sim_max_frame, text="Simulation time max (s):", bg="white").pack(side=tk.LEFT)
         self.sim_time_max_var = tk.StringVar(value=str(self.current['sim_time_max']))
-        tk.Entry(sim_max_frame, textvariable=self.sim_time_max_var, width=10).pack(side=tk.LEFT, padx=(5, 0))
+        tk.Entry(sim_max_frame, textvariable=self.sim_time_max_var, width=10, bg="white").pack(side=tk.LEFT, padx=(5, 0))
         
-        tk.Button(left_frame, text="Update plot", command=self.update_plot).pack(pady=10)
-        tk.Button(left_frame, text="Reset parameters", command=self.reset_parameters).pack(pady=(0, 10))
-        tk.Button(left_frame, text="Run simulation", command=self.run_sim).pack(side=tk.BOTTOM, pady=20)
+        tk.Button(left_frame, text="Update plot", command=self.update_plot, bg="white").pack(pady=10)
+        tk.Button(left_frame, text="Reset parameters", command=self.reset_parameters, bg="white").pack(pady=(0, 10))
+        tk.Button(left_frame, text="Run simulation", command=self.run_sim, bg="white").pack(side=tk.BOTTOM, pady=20)
         
-        self.status_label = tk.Label(left_frame, text="Idle", fg="blue")
+        self.status_label = tk.Label(left_frame, text="Idle", fg="blue", bg="white")
         self.status_label.pack(side=tk.BOTTOM)
 
-        self.progress_frame = tk.Frame(left_frame)
+        self.progress_frame = tk.Frame(left_frame, bg="white")
         self.progress_bar = ttk.Progressbar(self.progress_frame, orient="horizontal", mode="determinate", maximum=100)
         self.progress_bar.pack(side=tk.LEFT, expand=True, fill=tk.X)
-        self.progress_percent_label = tk.Label(self.progress_frame, text="0%", width=4, anchor='e')
+        self.progress_percent_label = tk.Label(self.progress_frame, text="0%", width=4, anchor='e', bg="white")
         self.progress_percent_label.pack(side=tk.RIGHT, padx=(5, 0))
         self.progress_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(5, 0))
         self.progress_frame.pack_forget()
 
         # Right Panel: Output Image
-        self.right_frame = tk.Frame(root)
+        self.right_frame = tk.Frame(root, bg="white")
         self.right_frame.grid(row=0, column=1, sticky='nsew')
         self.fig, self.ax = plt.subplots(figsize=(5, 5))
+        self.fig.set_facecolor('white')
+        self.ax.set_facecolor('white')
+        self.ax.set_xlabel('Parameter a')
+        self.ax.set_ylabel('Parameter b')
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.right_frame)
         self.canvas.get_tk_widget().pack(expand=True, fill=tk.BOTH)
         
@@ -274,6 +279,7 @@ class BenchmarkApp:
             except (ValueError, TypeError):
                 vmax = self.Z.max()
         self.ax.clear()
+        self.ax.set_facecolor('white')
         c = self.ax.imshow(self.Z, extent=[self.current['a_min'], self.current['a_max'], self.current['b_min'], self.current['b_max']], origin='lower', cmap=self.current['colormap'], vmin=vmin, vmax=vmax)
         if not hasattr(self, 'cbar'):
             self.cbar = self.fig.colorbar(c, ax=self.ax)
