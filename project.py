@@ -32,6 +32,23 @@ class Project:
         try:
             with open(os.path.join(self.folder_path, "metadata.json"), "r") as f:
                 self.metadata = json.load(f)
+            
+            # Request 10: Detect additional_roi_status from commands.txt
+            cmd_file = os.path.join(self.folder_path, "commands.txt")
+            if os.path.exists(cmd_file):
+                with open(cmd_file, "r") as f:
+                    content = f.read()
+                    # Check if the command is present and not commented
+                    if "capture additional region of interest" in content:
+                        # Check if it's not commented
+                        if not all(line.strip().startswith("#") for line in content.split("\n") 
+                                  if "capture additional region of interest" in line):
+                            self.metadata["additional_roi_status"] = "capturing"
+                        else:
+                            self.metadata["additional_roi_status"] = "not capturing"
+                    else:
+                        self.metadata["additional_roi_status"] = "not capturing"
+            
             if os.path.exists(os.path.join(self.folder_path, "samples.npy")):
                 self.samples = np.load(os.path.join(self.folder_path, "samples.npy")).tolist()
             if os.path.exists(os.path.join(self.folder_path, "results.npy")):
@@ -60,5 +77,6 @@ class Project:
                     f.write(f"{target}\n" if enable else f"# {target}\n")
                 else:
                     f.write(line)
-        self.metadata["additional_roi_status"] = "capturing" if enable else "capturing stopped"
+        # Request 10: Use "not capturing" instead of "capturing stopped"
+        self.metadata["additional_roi_status"] = "capturing" if enable else "not capturing"
         self.save()

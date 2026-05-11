@@ -7,23 +7,24 @@ from replayer import TextReplayer
 from vision_engine import VisionEngine
 from PIL import Image, ImageTk
 import numpy as np
-import threading
+import time
+import mss
 
 
-# TODO
-# 1. Why does sample generation take so long?
-# 2. On pressing Alt, window is still not brought to the foreground.
-# I want it to forcibly come to the front (pop up) so user can interact with it.
-# Currently, if user clicks on the taskbar icon, it brings up the correct window,
-# but ideally it should just pop up in front of them immediately.
-# 3. After generating sample, I am thrown back to the menu. I want to stay at
-# the sample generation screen and just update the number of simulation runs required.
-# 4. I should enter the new project name after I select the folder in the separate dialogue window, not in the recording menu.
-# The recording menu should just show the name I entered.
-# 5. Generate sample and back buttons should be centered.
-# 6. Why is "release key a" being recorded correctly, but "press key a" looks like ? symbol in the notepad?
+# BUG (LLM, does not read this, it is a note for me):
+# 1. In sobol, why does the first sample generation take so long? The 2nd one and further ones are instant.
+# The explanation provided: The first call to generate_samples() imports SALib.sample.sobol
+# importing SALib, numpy, and related modules costs time on first use
+# Of course, all the needed imports must be done at the start of the program, not at the moment of first sample generation.
+# 2. When I click X on the screenshot preview window, why am I going to the main menu? I should go back to the pause menu with the 
+# screenshot being discarded (so the behavior = behavior when I click Back or Cancel or whatever button is there for that)
+
+# TODO (LLM, does not read this, it is a note for me):
+# 1. Why is "release key a" being recorded correctly, but "press key a" looks like ? symbol in the notepad?
 # If I try to read it back, which symbol do I get? I want to get "press key a" when I read it back, not "press key ?"
-
+# 2. Edit parameters - in the table there should be fields min, max, and the delete button. Min, max are editable.
+# At the bottom of the window add a new button "Save", inactive if no changes. On saving, validate min, max values, if valid - save and display success window,
+# if not - show error message. After saving, keep the user at this window (with updated values).
 
 class MainApp:
     def __init__(self, root):
@@ -34,18 +35,57 @@ class MainApp:
         self.project = None
         self.recorder = None
         self.vision_engine = None
-        self.screen_stack = []
+        self.screen_stack = []  # Stack of (screen_name, screen_data) tuples
         self.roi_selection = None
+        self.recording_paused = False
+        self.replay_paused = False
+        self.current_sample_index = 0
+        
+        # Handle window close button
+        self.root.protocol("WM_DELETE_WINDOW", self.on_window_close)
         
         self.setup_main_menu()
 
+    def on_window_close(self):
+        """Handle X button click - go back in stack or close app"""
+        if len(self.screen_stack) > 0:
+            self.screen_stack.pop()  # Remove current screen
+            if len(self.screen_stack) > 0:
+                prev_screen, prev_data = self.screen_stack[-1]
+                self.show_screen(prev_screen, prev_data)
+            else:
+                self.root.destroy()
+        else:
+            self.root.destroy()
+
+    def push_screen(self, screen_name, screen_data=None):
+        """Push a new screen onto the stack"""
+        self.screen_stack.append((screen_name, screen_data))
+
+    def show_screen(self, screen_name, screen_data=None):
+        """Show a screen"""
+        if screen_name == "main_menu":
+            self.setup_main_menu()
+        elif screen_name == "project_dashboard":
+            self.show_project_dashboard()
+        elif screen_name == "recording_menu":
+            self.show_recording_menu()
+        elif screen_name == "add_param":
+            self.add_param_ui()
+        elif screen_name == "edit_param":
+            self.edit_param_ui()
+        elif screen_name == "sa_setup":
+            self.sa_setup_ui()
+
     def setup_main_menu(self):
         for widget in self.root.winfo_children(): widget.destroy()
+        self.root.geometry("500x600")
         main_frame = tk.Frame(self.root, bg="white")
         main_frame.pack(fill=tk.BOTH, expand=True)
         tk.Label(main_frame, text="Sensitivity Analysis Automation", font=("Arial", 14), bg="white").pack(pady=20)
         tk.Button(main_frame, text="Start new SA", command=self.start_new_sa, width=20, bg="white").pack(pady=10)
         tk.Button(main_frame, text="Open existing SA", command=self.open_existing_sa, width=20, bg="white").pack()
+        self.screen_stack = [("main_menu", None)]  # Reset stack to main menu
 
     # --- OPEN EXISTING FLOW ---
     def open_existing_sa(self):
@@ -56,15 +96,14 @@ class MainApp:
         self.project = Project(folder)
         if not self.project.load():
             messagebox.showerror("Error", "Invalid Project Folder structure.")
-            self.setup_main_menu()
             return
         
         err = self.project.validate()
         if err:
             messagebox.showerror("Invalid Project", err)
-            self.setup_main_menu()
             return
         
+        self.push_screen("project_dashboard")
         self.show_project_dashboard()
 
     def show_project_dashboard(self):
@@ -72,43 +111,88 @@ class MainApp:
             widget.destroy()
         
         self.root.title(f"Project: {self.project.metadata['name']}")
-        self.root.geometry("600x800")
+        self.root.geometry("760x860")
         self.root.config(bg="white")
+        
+        # Request 11: Track changes for Save button
+        changes_made = {"changed": False}
         
         main_frame = tk.Frame(self.root, bg="white")
         main_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
         
+        status_colors = {
+            "setup": "grey",
+            "in_progress": "orange",
+            "completed": "green"
+        }
+        
         # Status Line with Continue button
         stat_frame = tk.Frame(main_frame, bg="white")
         stat_frame.pack(fill=tk.X, pady=5)
-        tk.Label(stat_frame, text=f"Status: {self.project.metadata['status']}", font=("Arial", 10, "bold"), bg="white").pack(side=tk.LEFT)
+        status_color = status_colors.get(self.project.metadata['status'], 'black')
+        tk.Label(stat_frame, text=f"Status: {self.project.metadata['status']}", font=("Arial", 10, "bold"), fg=status_color, bg="white").pack(side=tk.LEFT)
         if self.project.metadata['status'] == "in_progress":
             tk.Button(stat_frame, text="Continue simulation runs", bg="lightblue",
                       command=self.resume_sims).pack(side=tk.LEFT, padx=10)
-
-        # Parameters
-        tk.Label(main_frame, text="Parameters:", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W)
-        for k, v in self.project.metadata['params'].items():
-            tk.Label(main_frame, text=f"{k}: [{v['min']}, {v['max']}]", bg="white").pack(anchor=tk.W, padx=20)
-
-        # Simulation Completion Indicator
-        comp_frame = tk.Frame(main_frame, bg="white", relief=tk.RIDGE, borderwidth=1)
-        comp_frame.pack(fill=tk.X, pady=10)
-        tk.Label(comp_frame, text="Simulation Completion Indicator", font=("Arial", 9, "bold"), bg="white").pack(anchor=tk.W, padx=5, pady=5)
         
-        btn_frame = tk.Frame(comp_frame, bg="white")
-        btn_frame.pack(fill=tk.X, padx=5, pady=5)
-        tk.Button(btn_frame, text="View", bg="white", command=self.view_completion_template).pack(side=tk.LEFT, padx=5)
-        if self.project.metadata['status'] == "in_progress":
-            tk.Button(btn_frame, text="Capture new", bg="white", command=self.capture_completion_indicator).pack(side=tk.LEFT, padx=5)
-
-        # Additional ROI Toggle
+        info_frame = tk.Frame(main_frame, bg="white")
+        info_frame.pack(fill=tk.X, pady=5)
+        tk.Label(info_frame, text=f"SA type: {self.project.metadata.get('sa_type', '-')}", bg="white").pack(side=tk.LEFT, padx=2)
+        tk.Label(info_frame, text=f"Runs required: {self.project.metadata.get('n_required', '-')}", bg="white").pack(side=tk.LEFT, padx=20)
+        
+        # Parameters table
+        table_frame = tk.Frame(main_frame, bg="white", relief=tk.RIDGE, borderwidth=1)
+        table_frame.pack(fill=tk.X, pady=10)
+        tk.Label(table_frame, text="Parameter settings", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W, padx=5, pady=5)
+        
+        param_table = tk.Frame(table_frame, bg="white")
+        param_table.pack(fill=tk.X, padx=5, pady=5)
+        
+        sa_type = self.project.metadata.get('sa_type', '')
+        headers = ["Name", "Range"]
+        if sa_type == 'Gradient-Based':
+            headers += ["Point", "Step"]
+        widths = [18, 24, 14, 14]
+        header_row = tk.Frame(param_table, bg="lightgrey")
+        header_row.pack(fill=tk.X)
+        for idx, header in enumerate(headers):
+            tk.Label(header_row, text=header, bg="lightgrey", width=widths[idx], anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=3)
+        
+        if len(self.project.metadata['params']) == 0:
+            tk.Label(param_table, text="No parameters defined.", bg="white").pack(padx=5, pady=5)
+        else:
+            for pname, bounds in self.project.metadata['params'].items():
+                row = tk.Frame(param_table, bg="white")
+                row.pack(fill=tk.X)
+                tk.Label(row, text=pname, bg="white", width=widths[0], anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+                tk.Label(row, text=f"[{bounds['min']}, {bounds['max']}]", bg="white", width=widths[1], anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+                if sa_type == 'Gradient-Based':
+                    grad_params = self.project.metadata.get('sa_params', {}).get(pname, {})
+                    tk.Label(row, text=str(grad_params.get('point', '')), bg="white", width=widths[2], anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+                    tk.Label(row, text=str(grad_params.get('step', '')), bg="white", width=widths[3], anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+        
+        # Simulation Completion Indicator
+        completion_frame = tk.Frame(main_frame, bg="white", relief=tk.RIDGE, borderwidth=1)
+        completion_frame.pack(fill=tk.X, pady=10)
+        indicator_files = self.find_files_with_prefix("roi_completion_")
+        indicator_exists = len(indicator_files) == 1
+        comp_button = tk.Button(completion_frame,
+                                text="View Simulation Completion Indicator",
+                                bg="white",
+                                state=tk.NORMAL if indicator_exists else tk.DISABLED,
+                                command=self.view_completion_template)
+        comp_button.pack(fill=tk.X, padx=10, pady=10)
+        if not indicator_exists:
+            tk.Label(completion_frame, text="No simulation completion indicator found", bg="white", fg="grey").pack(anchor=tk.W, padx=10, pady=0)
+        
+        # Additional ROI Toggle + View last
         roi_frame = tk.Frame(main_frame, bg="white")
         roi_frame.pack(fill=tk.X, pady=10)
-        tk.Label(roi_frame, text=f"Additional ROI: {self.project.metadata['additional_roi_status']}", bg="white").pack(side=tk.LEFT)
+        tk.Label(roi_frame, text=f"Additional ROI status: {self.project.metadata['additional_roi_status']}", bg="white").pack(side=tk.LEFT)
         btn_text = "Stop capturing" if self.project.metadata['additional_roi_status'] == "capturing" else "Resume capturing"
         tk.Button(roi_frame, text=btn_text, bg="white", command=self.toggle_add_roi).pack(side=tk.LEFT, padx=10)
-
+        tk.Button(roi_frame, text="View last additional ROI", bg="white", command=self.view_last_additional_roi).pack(side=tk.RIGHT)
+        
         # Colormap Status
         colormap_frame = tk.Frame(main_frame, bg="white", relief=tk.RIDGE, borderwidth=1)
         colormap_frame.pack(fill=tk.X, pady=10)
@@ -128,10 +212,10 @@ class MainApp:
         tk.Label(cmap_name_frame, text=f"({cmap_source})", bg="white").pack(side=tk.LEFT)
         tk.Button(cmap_name_frame, text="Identify from data", bg="white", command=self.identify_colormap_from_data).pack(side=tk.LEFT, padx=5)
         
-        def save_colormap(*args):
-            self.project.metadata['colormap']['name'] = cmap_var.get()
-            self.project.save()
-        cmap_var.trace('w', save_colormap)
+        def on_cmap_change(*args):
+            changes_made["changed"] = True
+            update_save_button()
+        cmap_var.trace('w', on_cmap_change)
         
         min_frame = tk.Frame(cmap_info_frame, bg="white")
         min_frame.pack(fill=tk.X, pady=2)
@@ -140,13 +224,10 @@ class MainApp:
         min_entry = tk.Entry(min_frame, textvariable=min_var, width=10, bg="white")
         min_entry.pack(side=tk.LEFT, padx=5)
         
-        def save_min(*args):
-            try:
-                self.project.metadata['colormap']['min'] = float(min_var.get())
-                self.project.save()
-            except:
-                pass
-        min_var.trace('w', save_min)
+        def on_min_change(*args):
+            changes_made["changed"] = True
+            update_save_button()
+        min_var.trace('w', on_min_change)
         
         max_frame = tk.Frame(cmap_info_frame, bg="white")
         max_frame.pack(fill=tk.X, pady=2)
@@ -155,22 +236,67 @@ class MainApp:
         max_entry = tk.Entry(max_frame, textvariable=max_var, width=10, bg="white")
         max_entry.pack(side=tk.LEFT, padx=5)
         
-        def save_max(*args):
-            try:
-                self.project.metadata['colormap']['max'] = float(max_var.get())
-                self.project.save()
-            except:
-                pass
-        max_var.trace('w', save_max)
+        def on_max_change(*args):
+            changes_made["changed"] = True
+            update_save_button()
+        max_var.trace('w', on_max_change)
 
         # View Results Button
         if self.project.metadata['status'] == "completed":
             tk.Button(main_frame, text="View SA results", bg="lightgreen", command=self.generate_report).pack(pady=20)
         
-        tk.Button(main_frame, text="Back", bg="white", command=self.setup_main_menu).pack(side=tk.BOTTOM, pady=10)
+        # Request 11: Save and Back buttons at bottom
+        button_frame = tk.Frame(main_frame, bg="white")
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
+        
+        save_button = tk.Button(button_frame, text="Save", bg="lightgrey", fg="grey", state=tk.DISABLED, 
+                               command=lambda: on_save_clicked())
+        save_button.pack(side=tk.RIGHT, padx=5)
+        
+        def update_save_button():
+            if changes_made["changed"]:
+                save_button.config(state=tk.NORMAL, bg="lightgreen", fg="black")
+            else:
+                save_button.config(state=tk.DISABLED, bg="lightgrey", fg="grey")
+        
+        def on_save_clicked():
+            try:
+                cmap_min = float(min_var.get())
+                cmap_max = float(max_var.get())
+                if cmap_min >= cmap_max:
+                    messagebox.showerror("Error", "Min value must be less than Max value")
+                    return
+                self.project.metadata['colormap']['name'] = cmap_var.get()
+                self.project.metadata['colormap']['min'] = cmap_min
+                self.project.metadata['colormap']['max'] = cmap_max
+                self.project.save()
+                messagebox.showinfo("Success", "Changes saved successfully")
+                changes_made["changed"] = False
+                update_save_button()
+            except ValueError:
+                messagebox.showerror("Error", "Invalid values - Min and Max must be numbers")
+        
+        def on_back_clicked():
+            if changes_made["changed"]:
+                if messagebox.askyesno("Unsaved Changes", "You have unsaved changes. Discard them?"):
+                    if len(self.screen_stack) > 0:
+                        self.screen_stack.pop()
+                    self.setup_main_menu()
+            else:
+                if len(self.screen_stack) > 0:
+                    self.screen_stack.pop()
+                self.setup_main_menu()
+        
+        tk.Button(button_frame, text="Back", bg="white", command=on_back_clicked).pack(side=tk.LEFT, padx=5)
 
     def toggle_add_roi(self):
         is_capturing = self.project.metadata['additional_roi_status'] == "capturing"
+        if not is_capturing:
+            # Check if additional ROI has been selected
+            roi_files = self.find_files_with_prefix("roi_additional_")
+            if not roi_files:
+                messagebox.showerror("Error", "No additional ROI selected yet")
+                return
         self.project.toggle_additional_roi_command(not is_capturing)
         self.show_project_dashboard()
 
@@ -179,14 +305,27 @@ class MainApp:
             self.start_replay()
 
     def view_completion_template(self):
-        template_files = [f for f in os.listdir(self.project.folder_path) if f.startswith("roi_completion")]
-        if not template_files:
+        template_files = self.find_files_with_prefix("roi_completion_")
+        if len(template_files) == 0:
             messagebox.showinfo("Info", "No simulation completion indicator found")
             return
-        
+        if len(template_files) > 1:
+            messagebox.showerror("Error", "Multiple completion indicator files found.")
+            return
         template_path = os.path.join(self.project.folder_path, template_files[0])
-        img = Image.open(template_path)
-        img.show()
+        os.startfile(template_path)
+
+    def find_files_with_prefix(self, prefix):
+        return [f for f in os.listdir(self.project.folder_path) if f.startswith(prefix)]
+
+    def view_last_additional_roi(self):
+        roi_files = self.find_files_with_prefix("roi_additional_")
+        if not roi_files:
+            messagebox.showinfo("Info", "No additional ROI captured yet")
+            return
+        full_paths = [os.path.join(self.project.folder_path, f) for f in roi_files]
+        latest = max(full_paths, key=os.path.getmtime)
+        os.startfile(latest)
 
     def capture_completion_indicator(self):
         self.start_roi_selection("completion_indicator")
@@ -249,49 +388,86 @@ class MainApp:
         except ImportError:
             messagebox.showerror("Error", "reportlab not installed. Install with: pip install reportlab")
 
-    # --- START NEW FLOW ---
     def start_new_sa(self):
         folder = filedialog.askdirectory(title="Select Empty Folder for New Project")
         if not folder:
             return
         
-        self.project = Project(folder)
-        self.project.save()
+        # Check if folder is empty or has project files
+        project_files = ["metadata.json", "commands.txt", "samples.npy", "results.npy"]
+        roi_files = [f for f in os.listdir(folder) if f.startswith("roi_")]
+        if os.listdir(folder) and (any(os.path.exists(os.path.join(folder, f)) for f in project_files) or roi_files):
+            messagebox.showerror("Error", "Selected folder is not empty. Please select an empty folder.")
+            return
         
-        cmd_file = os.path.join(folder, "commands.txt")
-        self.recorder = TextRecorder(cmd_file, self.show_recording_menu)
-        self.vision_engine = VisionEngine(folder)
-        
-        self.root.iconify()
-        messagebox.showinfo("Recording Started", "Recording mouse and keyboard. Press Alt to pause and open the control menu.")
-        self.recorder.start()
-
-    def show_recording_menu(self):
-        self.root.deiconify()
-        self.root.lift()
-        
+        # Transform main window into project name input (request 1)
         for widget in self.root.winfo_children():
             widget.destroy()
         
-        self.root.title("Recording Menu (Paused)")
+        self.root.title("New Project")
+        self.root.geometry("400x200")
+        self.root.config(bg="white")
+        
+        main_frame = tk.Frame(self.root, bg="white")
+        main_frame.pack(fill=tk.BOTH, expand=True, pady=20, padx=20)
+        
+        tk.Label(main_frame, text="Enter project name:", bg="white", font=("Arial", 12)).pack(pady=10)
+        name_entry = tk.Entry(main_frame, font=("Arial", 12), bg="white")
+        name_entry.pack(pady=10, fill=tk.X)
+        name_entry.focus()
+        
+        def confirm_name():
+            name = name_entry.get().strip()
+            if not name:
+                messagebox.showerror("Error", "Project name cannot be empty")
+                return
+            self.proceed_with_recording(folder, name)
+        
+        button_frame = tk.Frame(main_frame, bg="white")
+        button_frame.pack(pady=10)
+        tk.Button(button_frame, text="OK", command=confirm_name, bg="white").pack()
+        name_entry.bind("<Return>", lambda e: confirm_name())
+
+    def proceed_with_recording(self, folder, project_name):
+        """Initialize project and start recording"""
+        self.project = Project(folder)
+        self.project.metadata['name'] = project_name
+        self.project.save()
+        
+        cmd_file = os.path.join(folder, "commands.txt")
+        self.recorder = TextRecorder(cmd_file, self.show_recording_menu_from_pause)
+        self.vision_engine = VisionEngine(folder)
+        
+        self.root.iconify()
+        messagebox.showinfo("Recording Started", "Recording mouse and keyboard. Press Esc to pause and open the control menu.")
+        self.recorder.start()
+
+    def show_recording_menu_from_pause(self):
+        """Called when recording is paused - bring window to front"""
+        self.recording_paused = True
+        self.root.deiconify()
+        # Request 3: Try multiple methods to bring window to front
+        try:
+            self.root.attributes("-topmost", True)
+            self.root.attributes("-topmost", False)
+        except:
+            pass
+        self.root.lift()
+        self.root.focus_force()
+        self.push_screen("recording_menu")
+        self.show_recording_menu()
+
+    def show_recording_menu(self):
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        
+        # Request 2: Project name in title bar format
+        self.root.title(f"Recording Menu (Paused) | {self.project.metadata['name']}")
         self.root.geometry("500x700")
         self.root.config(bg="white")
         
         main_frame = tk.Frame(self.root, bg="white")
         main_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
-
-        # Project Name
-        name_frame = tk.Frame(main_frame, bg="white")
-        name_frame.pack(fill=tk.X, pady=10)
-        tk.Label(name_frame, text="Project Name:", bg="white").pack(side=tk.LEFT)
-        name_var = tk.StringVar(value=self.project.metadata['name'])
-        name_entry = tk.Entry(name_frame, textvariable=name_var, font=("Arial", 12), bg="white")
-        name_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
-        
-        def save_name(*args):
-            self.project.metadata['name'] = name_var.get()
-            self.project.save()
-        name_var.trace('w', save_name)
         
         # Menu Buttons
         tk.Button(main_frame, text="Add new parameter", command=self.add_param_ui, bg="white").pack(fill=tk.X, padx=20, pady=5)
@@ -304,122 +480,191 @@ class MainApp:
         
         tk.Button(main_frame, text="Resume Recording", bg="lightblue", 
                   command=self.resume_recording).pack(fill=tk.X, padx=20, pady=10)
-        tk.Button(main_frame, text="Save & Start Running", bg="green", fg="white", 
+        tk.Button(main_frame, text="Save & Start Running Simulations", bg="green", fg="white", 
                   command=self.start_running).pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=10)
-
+        
     def resume_recording(self):
+        self.recording_paused = False
         self.root.iconify()
-        self.recorder.start()
+        if self.recorder:
+            self.recorder.start()
+
+    def pause_replay(self):
+        """Pause replay and show pause menu."""
+        self.replay_paused = True
+        self.show_replay_pause_menu()
+
+    def show_replay_pause_menu(self):
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        
+        self.root.title(f"Replay Paused | {self.project.metadata['name']}")
+        self.root.geometry("500x400")
+        self.root.config(bg="white")
+        
+        main_frame = tk.Frame(self.root, bg="white")
+        main_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
+        
+        tk.Label(main_frame, text=f"Replay paused at sample {self.current_sample_index + 1} of {len(self.project.samples)}", 
+                bg="white", font=("Arial", 12)).pack(pady=20)
+        
+        tk.Button(main_frame, text="Start running simulations", bg="green", fg="white", 
+                  command=self.resume_replay).pack(fill=tk.X, padx=20, pady=10)
+        
+        tk.Button(main_frame, text="Stop and Return to Main Menu", bg="red", fg="white", 
+                  command=self.stop_replay).pack(fill=tk.X, padx=20, pady=10)
+
+    def resume_replay(self):
+        """Resume replay."""
+        self.replay_paused = False
+        self.setup_main_menu()
+
+    def stop_replay(self):
+        """Stop replay and return to main menu."""
+        self.replay_paused = False
+        self.setup_main_menu()
 
     def view_cmd_file(self):
         cmd_file = os.path.join(self.project.folder_path, "commands.txt")
         os.startfile(cmd_file)
 
     def start_roi_selection(self, roi_type):
-        """Start ROI selection by taking a screenshot and allowing user to select region."""
-        # Take a screenshot
-        self.vision_engine = VisionEngine(self.project.folder_path)
-        screenshot = self.vision_engine.grab_screen()
-        
-        # Store screenshot for later use in selection
-        self.current_screenshot = screenshot
+        """Start ROI selection with fullscreen overlay (improved from example)"""
         self.roi_type = roi_type
+        self.roi_data = {"x1": 0, "y1": 0, "x2": 0, "y2": 0}
         
-        # Create ROI selection window
-        self.show_roi_selection_window(screenshot)
-
-    def show_roi_selection_window(self, screenshot):
-        """Show the screenshot for ROI selection."""
-        # Convert numpy array to PIL Image
-        img_pil = Image.fromarray(screenshot)
+        # Create fullscreen overlay for ROI selection
+        roi_win = tk.Tk()
+        roi_win.attributes("-fullscreen", True)
+        roi_win.attributes("-alpha", 0.3)  # semi-transparent
+        roi_win.configure(bg="black")
         
-        # Create new window
-        roi_win = tk.Toplevel(self.root)
-        roi_win.title(f"Select ROI ({self.roi_type})")
-        roi_win.config(bg="white")
+        canvas = tk.Canvas(roi_win, cursor="cross", bg="black", highlightthickness=0)
+        canvas.pack(fill=tk.BOTH, expand=True)
         
-        # Convert to PhotoImage for display
-        photo = ImageTk.PhotoImage(img_pil.resize((800, 600)))
-        label = tk.Label(roi_win, image=photo, bg="white")
-        label.image = photo
-        label.pack()
-        
-        # Instructions
-        instr = tk.Label(roi_win, text="Click and drag to select ROI region", bg="white")
-        instr.pack()
-        
-        # Store rectangle coordinates
-        self.rect_coords = {"x1": 0, "y1": 0, "x2": 0, "y2": 0, "start": False}
+        rect = None
         
         def on_mouse_down(event):
-            self.rect_coords["x1"] = event.x
-            self.rect_coords["y1"] = event.y
-            self.rect_coords["start"] = True
+            nonlocal rect
+            self.roi_data["x1"] = event.x
+            self.roi_data["y1"] = event.y
+            if rect:
+                canvas.delete(rect)
+            rect = canvas.create_rectangle(event.x, event.y, event.x, event.y, outline="red", width=2)
+        
+        def on_mouse_drag(event):
+            nonlocal rect
+            if rect:
+                canvas.coords(rect, self.roi_data["x1"], self.roi_data["y1"], event.x, event.y)
         
         def on_mouse_up(event):
-            if self.rect_coords["start"]:
-                self.rect_coords["x2"] = event.x
-                self.rect_coords["y2"] = event.y
-                self.rect_coords["start"] = False
-                roi_win.destroy()
-                self.show_roi_preview()
+            self.roi_data["x2"] = event.x
+            self.roi_data["y2"] = event.y
+            roi_win.destroy()
+            self.show_roi_preview()
         
-        label.bind("<Button-1>", on_mouse_down)
-        label.bind("<ButtonRelease-1>", on_mouse_up)
+        canvas.bind("<ButtonPress-1>", on_mouse_down)
+        canvas.bind("<B1-Motion>", on_mouse_drag)
+        canvas.bind("<ButtonRelease-1>", on_mouse_up)
+        
+        roi_win.mainloop()
 
     def show_roi_preview(self):
-        """Show preview of selected ROI."""
-        x1, y1, x2, y2 = self.rect_coords["x1"], self.rect_coords["y1"], self.rect_coords["x2"], self.rect_coords["y2"]
+        """Show preview of selected ROI for confirmation - transform main window (request 4,5)"""
+        x1, y1, x2, y2 = self.roi_data["x1"], self.roi_data["y1"], self.roi_data["x2"], self.roi_data["y2"]
         
+        # Normalize coordinates
         if x1 > x2:
             x1, x2 = x2, x1
         if y1 > y2:
             y1, y2 = y2, y1
         
-        # Extract ROI from screenshot
-        roi_image = self.current_screenshot[y1:y2, x1:x2]
-        roi_pil = Image.fromarray(roi_image)
+        # Capture ROI using mss
+        with mss.mss() as sct:
+            monitor = {"top": y1, "left": x1, "width": x2 - x1, "height": y2 - y1}
+            screenshot = sct.grab(monitor)
+            roi_image = Image.frombytes('RGB', screenshot.size, screenshot.rgb)
         
-        # Create preview window
-        prev_win = tk.Toplevel(self.root)
-        prev_win.title("ROI Preview")
-        prev_win.config(bg="white")
+        # Store for later use and saving
+        self.current_roi_image = roi_image
+        self.current_roi_coords = (x1, y1, x2, y2)
         
-        photo = ImageTk.PhotoImage(roi_pil.resize((600, 400)))
-        label = tk.Label(prev_win, image=photo, bg="white")
+        # Request 4 & 5: Transform main window for preview instead of creating new window
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        
+        # Request 5: Adapt window size to image (natural size, no distortion)
+        img_width, img_height = roi_image.size
+        # Scale if too large, maintain aspect ratio
+        max_width, max_height = 800, 600
+        scale = min(max_width / img_width, max_height / img_height, 1.0)
+        display_width = int(img_width * scale)
+        display_height = int(img_height * scale)
+        
+        min_window_width = 280
+        window_width = max(display_width + 40, min_window_width)
+        window_height = display_height + 100
+        self.root.title("Screenshot Preview")
+        self.root.geometry(f"{window_width}x{window_height}")
+        self.root.config(bg="white")
+        
+        main_frame = tk.Frame(self.root, bg="white")
+        main_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
+        
+        photo = ImageTk.PhotoImage(roi_image.resize((display_width, display_height)))
+        label = tk.Label(main_frame, image=photo, bg="white")
         label.image = photo
         label.pack(pady=10)
         
-        button_frame = tk.Frame(prev_win, bg="white")
+        button_frame = tk.Frame(main_frame, bg="white")
         button_frame.pack(pady=10)
         
         def on_ok():
-            self.save_roi(x1, y1, x2, y2)
-            prev_win.destroy()
+            self.save_roi()
             self.show_recording_menu()
         
         def on_retake():
-            prev_win.destroy()
             self.start_roi_selection(self.roi_type)
         
         def on_cancel():
-            prev_win.destroy()
             self.show_recording_menu()
         
         tk.Button(button_frame, text="OK", bg="white", command=on_ok).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Retake", bg="white", command=on_retake).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Cancel", bg="white", command=on_cancel).pack(side=tk.LEFT, padx=5)
 
-    def save_roi(self, x1, y1, x2, y2):
-        """Save ROI and add command to file."""
+    def save_roi(self):
+        """Save ROI using the stored image from preview."""
+        import cv2
+        x1, y1, x2, y2 = self.current_roi_coords
+        
+        # Convert PIL to numpy array for cv2
+        rgb_img = np.array(self.current_roi_image)
+        bgr_img = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR)
+        
         if self.roi_type == "completion_indicator":
-            self.vision_engine.extract_and_store_main_roi((x1, y1, x2, y2))
+            # Delete old completion indicator files
+            for f in os.listdir(self.project.folder_path):
+                if f.startswith("roi_completion_"):
+                    os.remove(os.path.join(self.project.folder_path, f))
+            roi_path = os.path.join(self.project.folder_path, f"roi_completion_{x1}_{y1}_{x2}_{y2}.png")
+            cv2.imwrite(roi_path, bgr_img)
             self.recorder.append_command("wait for simulation to finish")
         elif self.roi_type == "main_roi":
-            self.vision_engine.extract_and_store_main_roi((x1, y1, x2, y2))
+            # Delete old main ROI files
+            for f in os.listdir(self.project.folder_path):
+                if f.startswith("roi_main_"):
+                    os.remove(os.path.join(self.project.folder_path, f))
+            roi_path = os.path.join(self.project.folder_path, f"roi_main_{x1}_{y1}_{x2}_{y2}.png")
+            cv2.imwrite(roi_path, bgr_img)
             self.recorder.append_command("capture the region of interest")
         elif self.roi_type == "additional_roi":
-            self.vision_engine.extract_and_store_additional_roi((x1, y1, x2, y2))
+            # Delete old additional ROI files
+            for f in os.listdir(self.project.folder_path):
+                if f.startswith("roi_additional_"):
+                    os.remove(os.path.join(self.project.folder_path, f))
+            roi_path = os.path.join(self.project.folder_path, f"roi_additional_{x1}_{y1}_{x2}_{y2}.png")
+            cv2.imwrite(roi_path, bgr_img)
             self.recorder.append_command("capture additional region of interest")
 
     def add_param_ui(self):
@@ -497,7 +742,7 @@ class MainApp:
             widget.destroy()
         
         self.root.title("SA Setup")
-        self.root.geometry("500x600")
+        self.root.geometry("500x550")
         self.root.config(bg="white")
         
         main_frame = tk.Frame(self.root, bg="white")
@@ -508,11 +753,7 @@ class MainApp:
         
         sa_types = [
             'Sobol (SALib)',
-            'Morris (SALib)',
-            'Saltelli (SALib)',
-            'Gradient-Based',
-            'LHS (Latin Hypercube)',
-            'Fast (SALib)'
+            'Gradient-Based'
         ]
         
         cb = ttk.Combobox(main_frame, textvariable=type_var, values=sa_types, state='readonly')
@@ -529,27 +770,61 @@ class MainApp:
             sa_type = type_var.get()
             
             if sa_type == 'Sobol (SALib)':
-                tk.Label(param_frame, text="N (Samples):", bg="white").pack()
-                tk.Entry(param_frame, name="n_entry", bg="white").pack()
-            elif sa_type == 'Morris (SALib)':
-                tk.Label(param_frame, text="N (Trajectories):", bg="white").pack()
-                tk.Entry(param_frame, name="n_entry", bg="white").pack()
-            elif sa_type == 'Saltelli (SALib)':
-                tk.Label(param_frame, text="N (Samples):", bg="white").pack()
-                tk.Entry(param_frame, name="n_entry", bg="white").pack()
+                # Powers of 2 from 2^4 to 2^12 (16 to 4096)
+                powers_of_2 = [2**i for i in range(4, 13)]
+                tk.Label(param_frame, text="N (must be power of 2):", bg="white").pack()
+                current_n = self.project.metadata.get('sa_params', {}).get('n', 128)
+                if current_n not in powers_of_2:
+                    current_n = 128
+                n_var = tk.StringVar(value=str(current_n))
+                n_dropdown = ttk.Combobox(param_frame, textvariable=n_var, values=[str(p) for p in powers_of_2], 
+                                         state='readonly')
+                n_dropdown.pack()
+                param_frame.sobol_n = n_var
             elif sa_type == 'Gradient-Based':
-                tk.Label(param_frame, text="Point values (comma-separated):", bg="white").pack()
-                tk.Entry(param_frame, name="point_entry", bg="white").pack()
-                tk.Label(param_frame, text="Step sizes (comma-separated):", bg="white").pack()
-                tk.Entry(param_frame, name="step_entry", bg="white").pack()
-                tk.Label(param_frame, text="Approximation order (1 or 2):", bg="white").pack()
-                tk.Entry(param_frame, name="order_entry", bg="white").pack()
-            elif sa_type == 'LHS (Latin Hypercube)':
-                tk.Label(param_frame, text="N (Samples):", bg="white").pack()
-                tk.Entry(param_frame, name="n_entry", bg="white").pack()
-            elif sa_type == 'Fast (SALib)':
-                tk.Label(param_frame, text="N (Samples):", bg="white").pack()
-                tk.Entry(param_frame, name="n_entry", bg="white").pack()
+                # Request 13: Gradient-based UI with parameter table
+                tk.Label(param_frame, text="Parameter settings", 
+                        bg="white", font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=10)
+                
+                # Create parameter table
+                table_frame = tk.Frame(param_frame, bg="white")
+                table_frame.pack(fill=tk.X, padx=10)
+                
+                # Header
+                header_frame = tk.Frame(table_frame, bg="lightgrey")
+                header_frame.pack(fill=tk.X)
+                tk.Label(header_frame, text="Name", bg="lightgrey", width=15, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+                tk.Label(header_frame, text="Interval", bg="lightgrey", width=15, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+                tk.Label(header_frame, text="Point", bg="lightgrey", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+                tk.Label(header_frame, text="Step", bg="lightgrey", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+                
+                # Rows for each parameter
+                param_entries = {}
+                saved_grad_params = self.project.metadata.get('sa_params', {}) if self.project.metadata.get('sa_type') == 'Gradient-Based' else {}
+                for param_name, bounds in self.project.metadata['params'].items():
+                    row_frame = tk.Frame(table_frame, bg="white")
+                    row_frame.pack(fill=tk.X)
+                    
+                    tk.Label(row_frame, text=param_name, bg="white", width=15, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+                    interval_text = f"[{bounds['min']}, {bounds['max']}]"
+                    tk.Label(row_frame, text=interval_text, bg="white", width=15, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+                    
+                    # Point entry
+                    default_point = saved_grad_params.get(param_name, {}).get('point', (bounds['min'] + bounds['max']) / 2)
+                    point_var = tk.StringVar(value=str(default_point))
+                    point_entry = tk.Entry(row_frame, textvariable=point_var, width=12, bg="white")
+                    point_entry.pack(side=tk.LEFT, padx=2, pady=2)
+                    
+                    # Step entry
+                    default_step = saved_grad_params.get(param_name, {}).get('step', 0.001)
+                    step_var = tk.StringVar(value=str(default_step))
+                    step_entry = tk.Entry(row_frame, textvariable=step_var, width=12, bg="white")
+                    step_entry.pack(side=tk.LEFT, padx=2, pady=2)
+                    
+                    param_entries[param_name] = {"point": point_var, "step": step_var}
+                
+                # Store references for later use
+                param_frame.gradient_params = param_entries
         
         cb.bind("<<ComboboxSelected>>", on_select)
         
@@ -563,9 +838,9 @@ class MainApp:
         tk.Label(info_frame, text=f"Number of simulation runs required: {self.project.metadata.get('n_required', '-')}", 
                  bg="white").pack()
         
-        # Buttons
+        # Buttons (request 6 - properly centered)
         button_frame = tk.Frame(main_frame, bg="white")
-        button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
+        button_frame.pack(side=tk.BOTTOM, pady=10)
         
         def generate_samples():
             self.generate_samples(type_var.get(), param_frame)
@@ -576,11 +851,7 @@ class MainApp:
     def generate_samples(self, sa_type, frame):
         """Generate samples using SALib or gradient method."""
         try:
-            from SALib.sample.saltelli import sample as saltelli_sample
             from SALib.sample.sobol import sample as sobol_sample
-            from SALib.sample.morris import sample as morris_sample
-            from SALib.sample.latin import sample as latin_sample
-            from SALib.sample.fast_sampler import sample as fast_sample
             
             if not sa_type:
                 messagebox.showerror("Error", "Please select an SA type")
@@ -600,52 +871,93 @@ class MainApp:
             # Generate samples based on type
             if sa_type == 'Sobol (SALib)':
                 n = 128
+                if hasattr(frame, 'sobol_n'):
+                    try:
+                        n_val = int(frame.sobol_n.get())
+                        if n_val in [2**i for i in range(4, 13)]:
+                            n = n_val
+                    except Exception:
+                        pass
                 samples = sobol_sample(problem, n)
-            elif sa_type == 'Morris (SALib)':
-                n = 20
-                samples = morris_sample(problem, n)
-            elif sa_type == 'Saltelli (SALib)':
-                n = 128
-                samples = saltelli_sample(problem, n)
-            elif sa_type == 'LHS (Latin Hypercube)':
-                n = 128
-                samples = latin_sample(problem, n)
-            elif sa_type == 'Fast (SALib)':
-                n = 128
-                samples = fast_sample(problem, n)
+                self.project.metadata['sa_params'] = {'n': n}
             elif sa_type == 'Gradient-Based':
-                samples = self.generate_gradient_samples(problem)
+                if hasattr(frame, 'gradient_params'):
+                    try:
+                        gradient_params = {}
+                        for param_name, entries in frame.gradient_params.items():
+                            point = float(entries['point'].get())
+                            step = float(entries['step'].get())
+                            if step <= 0:
+                                messagebox.showerror("Error", f"Step size for {param_name} must be > 0")
+                                return
+                            gradient_params[param_name] = {"point": point, "step": step}
+                        samples = self.generate_gradient_samples(problem, gradient_params)
+                        self.project.metadata['sa_params'] = gradient_params
+                    except ValueError:
+                        messagebox.showerror("Error", "Invalid parameter values - must be numbers")
+                        return
+                else:
+                    messagebox.showerror("Error", "Gradient parameters not found")
+                    return
+            else:
+                messagebox.showerror("Error", "Unsupported SA type")
+                return
             
             self.project.samples = samples.tolist() if hasattr(samples, 'tolist') else samples
             self.project.metadata['n_required'] = len(self.project.samples)
             self.project.metadata['sa_type'] = sa_type
             self.project.save()
             
+            # Request 7: Ensure UI updates with new value - force reload
             messagebox.showinfo("Success", f"Generated {len(self.project.samples)} sample points for {sa_type}")
-            self.show_recording_menu()
+            self.sa_setup_ui()  # This will reload and show updated n_required
         except ImportError:
             messagebox.showerror("Error", "SALib not installed. Install with: pip install SALib")
         except Exception as e:
             messagebox.showerror("Error", f"Error generating samples: {str(e)}")
 
-    def generate_gradient_samples(self, problem):
-        """Generate samples for gradient-based SA."""
-        # Simple gradient sampling at central point with variations
+    def generate_gradient_samples(self, problem, gradient_params):
+        """Generate samples for gradient-based SA using central difference."""
         n_vars = problem['num_vars']
         samples = []
+        param_names = problem['names']
+        bounds = problem['bounds']
         
-        # Central point
-        central = [(problem['bounds'][i][0] + problem['bounds'][i][1]) / 2 for i in range(n_vars)]
-        samples.append(central)
-        
-        # Perturbed samples
-        for i in range(n_vars):
-            for sign in [-1, 1]:
-                sample = central.copy()
-                sample[i] += sign * (problem['bounds'][i][1] - problem['bounds'][i][0]) * 0.1
-                samples.append(sample)
+        # For central difference, generate 2 points per parameter: negative and positive step
+        for i, name in enumerate(param_names):
+            gp = gradient_params.get(name, {})
+            step = abs(gp.get('step', 0.0))
+            if step <= 0:
+                step = (bounds[i][1] - bounds[i][0]) * 0.1
+            
+            # Central point for this parameter
+            central = []
+            for j, pname in enumerate(param_names):
+                if j == i:
+                    central.append(gp.get('point', (bounds[j][0] + bounds[j][1]) / 2))
+                else:
+                    central.append(gradient_params.get(pname, {}).get('point', (bounds[j][0] + bounds[j][1]) / 2))
+            
+            # Negative step
+            sample_neg = central.copy()
+            sample_neg[i] = max(bounds[i][0], min(bounds[i][1], sample_neg[i] - step))
+            samples.append(sample_neg)
+            
+            # Positive step
+            sample_pos = central.copy()
+            sample_pos[i] = max(bounds[i][0], min(bounds[i][1], sample_pos[i] + step))
+            samples.append(sample_pos)
         
         return np.array(samples)
+
+    def cleanup_partial_roi_files(self):
+        """Remove partial ROI files before replaying the current sample."""
+        for f in os.listdir(self.project.folder_path):
+            if f.startswith("roi_main") or f.startswith("roi_additional"):
+                try:
+                    os.remove(os.path.join(self.project.folder_path, f))
+                except OSError:
+                    pass
 
     def start_running(self):
         """Save project and start replay simulation."""
@@ -664,12 +976,15 @@ class MainApp:
         self.root.deiconify()
         self.setup_main_menu()
         
-        # Start replay in background
-        threading.Thread(target=self.start_replay, daemon=True).start()
+        # Start replay synchronously
+        self.start_replay()
 
     def start_replay(self):
         """Start replaying commands for all samples."""
         try:
+            # Bind Esc for pause
+            self.root.bind('<Escape>', lambda e: self.pause_replay())
+            
             cmd_file = os.path.join(self.project.folder_path, "commands.txt")
             replayer = TextReplayer()
             template_path = None
@@ -682,9 +997,16 @@ class MainApp:
             
             # Run simulations
             param_names = list(self.project.metadata['params'].keys())
-            for i, sample in enumerate(self.project.samples):
+            for i in range(len(self.project.samples)):
+                self.current_sample_index = i
                 if np.isnan(self.project.results[i]):
-                    param_dict = {param_names[j]: sample[j] for j in range(len(param_names))}
+                    # Check if paused before starting this sample, and discard any partial ROI files
+                    self.cleanup_partial_roi_files()
+                    while self.replay_paused:
+                        self.root.update()
+                        time.sleep(0.1)
+                    
+                    param_dict = {param_names[j]: self.project.samples[i][j] for j in range(len(param_names))}
                     replayer.execute_run(cmd_file, param_dict, self.vision_engine, template_path)
                     
                     # Extract result from main ROI
@@ -701,6 +1023,8 @@ class MainApp:
             
         except Exception as e:
             messagebox.showerror("Error", f"Replay failed: {str(e)}")
+        finally:
+            self.root.unbind('<Escape>')
 
 if __name__ == "__main__":
     root = tk.Tk()

@@ -72,12 +72,40 @@ class VisionEngine:
         avg_color = rgb_img.mean(axis=0).mean(axis=0)
         return avg_color
 
+    def extract_and_store_completion_indicator(self, roi_coords):
+        """Extracts and stores simulation completion indicator (request 8: different name from main ROI).
+        roi_coords: (x1, y1, x2, y2)
+        """
+        if not self.project_path:
+            return None
+        
+        # Request 8: Delete old completion indicator file if exists
+        for f in os.listdir(self.project_path):
+            if f.startswith("roi_completion_"):
+                os.remove(os.path.join(self.project_path, f))
+        
+        x1, y1, x2, y2 = roi_coords
+        bbox = {'left': x1, 'top': y1, 'width': x2 - x1, 'height': y2 - y1}
+        screenshot = self.sct.grab(bbox)
+        img = np.array(screenshot)
+        rgb_img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
+        
+        # Save with different naming scheme
+        roi_path = os.path.join(self.project_path, f"roi_completion_{x1}_{y1}_{x2}_{y2}.png")
+        cv2.imwrite(roi_path, cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR))
+        return roi_path
+
     def extract_and_store_main_roi(self, roi_coords):
-        """Extracts and stores main ROI screenshot.
+        """Extracts and stores main ROI screenshot (request 9: replace old file).
         roi_coords: (x1, y1, x2, y2) where (x1,y1) is top-left, (x2,y2) is bottom-right
         """
         if not self.project_path:
             return None
+        
+        # Request 9: Delete old main ROI file if exists
+        for f in os.listdir(self.project_path):
+            if f.startswith("roi_main_"):
+                os.remove(os.path.join(self.project_path, f))
         
         x1, y1, x2, y2 = roi_coords
         bbox = {'left': x1, 'top': y1, 'width': x2 - x1, 'height': y2 - y1}
@@ -92,9 +120,14 @@ class VisionEngine:
         return roi_path
 
     def extract_and_store_additional_roi(self, roi_coords):
-        """Extracts and stores additional ROI screenshot."""
+        """Extracts and stores additional ROI screenshot (request 9: replace old file)."""
         if not self.project_path:
             return None
+        
+        # Request 9: Delete old additional ROI file if exists
+        for f in os.listdir(self.project_path):
+            if f.startswith("roi_additional_"):
+                os.remove(os.path.join(self.project_path, f))
         
         x1, y1, x2, y2 = roi_coords
         bbox = {'left': x1, 'top': y1, 'width': x2 - x1, 'height': y2 - y1}

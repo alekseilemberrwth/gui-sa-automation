@@ -34,7 +34,7 @@ class TextRecorder:
             self.events.append(f'{mouse_click} at {x}, {y}')
 
     def on_press(self, key):
-        if key == keyboard.Key.alt or key == keyboard.Key.alt_gr or key == keyboard.Key.alt_l or key == keyboard.Key.alt_r:
+        if key == keyboard.Key.esc:
             self.stop_and_save()
             self.on_menu_trigger()
             return
@@ -52,8 +52,8 @@ class TextRecorder:
     def on_release(self, key):
         if not self.recording: return
         
-        # Skip Alt key
-        if key == keyboard.Key.alt or key == keyboard.Key.alt_gr or key == keyboard.Key.alt_l or key == keyboard.Key.alt_r:
+        # Skip Escape key
+        if key == keyboard.Key.esc:
             return
         
         # Get key name
