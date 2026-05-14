@@ -9,22 +9,21 @@ from PIL import Image, ImageTk
 import numpy as np
 import time
 import mss
+import cv2
+from SALib.sample.sobol import sample as sobol_sample
 
 
 # BUG (LLM, does not read this, it is a note for me):
-# 1. In sobol, why does the first sample generation take so long? The 2nd one and further ones are instant.
-# The explanation provided: The first call to generate_samples() imports SALib.sample.sobol
-# importing SALib, numpy, and related modules costs time on first use
-# Of course, all the needed imports must be done at the start of the program, not at the moment of first sample generation.
-# 2. When I click X on the screenshot preview window, why am I going to the main menu? I should go back to the pause menu with the 
-# screenshot being discarded (so the behavior = behavior when I click Back or Cancel or whatever button is there for that)
+# 1. Re-capturing roi, additional roi and the simulation completion indicator in the pause menu should not add commands to the command file.
+# By recapturing I mean both Retaking and clicking the same button in the pause menu again (so taking from scratch).
 
 # TODO (LLM, does not read this, it is a note for me):
-# 1. Why is "release key a" being recorded correctly, but "press key a" looks like ? symbol in the notepad?
-# If I try to read it back, which symbol do I get? I want to get "press key a" when I read it back, not "press key ?"
-# 2. Edit parameters - in the table there should be fields min, max, and the delete button. Min, max are editable.
-# At the bottom of the window add a new button "Save", inactive if no changes. On saving, validate min, max values, if valid - save and display success window,
-# if not - show error message. After saving, keep the user at this window (with updated values).
+# 1. When user clicks "Save & Start Running Simulations", make sure command file is valid:
+# 0) there are no unknown commands;
+# 1) every selected parameter {param} have exactly one corresponding command "enter value for {param}"; 2) there are no unknown parameter names;
+# 3) there is only command of each of these types: "wait for simulation to finish", "capture additional region of interest", "capture the region of interest".
+# 4) no parameter values can be entered after "wait for simulation to finish" command.
+# 5) "capture the region of interest" command must be after "wait for simulation to finish" command.
 
 class MainApp:
     def __init__(self, root):
@@ -40,6 +39,7 @@ class MainApp:
         self.recording_paused = False
         self.replay_paused = False
         self.current_sample_index = 0
+        self.in_roi_preview = False  # Track if we're currently showing ROI preview
         
         # Handle window close button
         self.root.protocol("WM_DELETE_WINDOW", self.on_window_close)
@@ -48,6 +48,12 @@ class MainApp:
 
     def on_window_close(self):
         """Handle X button click - go back in stack or close app"""
+        # If in ROI preview, go back to recording menu and discard ROI
+        if self.in_roi_preview:
+            self.in_roi_preview = False
+            self.show_recording_menu()
+            return
+        
         if len(self.screen_stack) > 0:
             self.screen_stack.pop()  # Remove current screen
             if len(self.screen_stack) > 0:
@@ -130,7 +136,8 @@ class MainApp:
         stat_frame = tk.Frame(main_frame, bg="white")
         stat_frame.pack(fill=tk.X, pady=5)
         status_color = status_colors.get(self.project.metadata['status'], 'black')
-        tk.Label(stat_frame, text=f"Status: {self.project.metadata['status']}", font=("Arial", 10, "bold"), fg=status_color, bg="white").pack(side=tk.LEFT)
+        tk.Label(stat_frame, text="Status:", font=("Arial", 10, "bold"), fg="black", bg="white").pack(side=tk.LEFT)
+        tk.Label(stat_frame, text=self.project.metadata['status'], font=("Arial", 10, "bold"), fg=status_color, bg="white").pack(side=tk.LEFT)
         if self.project.metadata['status'] == "in_progress":
             tk.Button(stat_frame, text="Continue simulation runs", bg="lightblue",
                       command=self.resume_sims).pack(side=tk.LEFT, padx=10)
@@ -172,18 +179,14 @@ class MainApp:
                     tk.Label(row, text=str(grad_params.get('step', '')), bg="white", width=widths[3], anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
         
         # Simulation Completion Indicator
-        completion_frame = tk.Frame(main_frame, bg="white", relief=tk.RIDGE, borderwidth=1)
+        completion_frame = tk.Frame(main_frame, bg="white")
         completion_frame.pack(fill=tk.X, pady=10)
-        indicator_files = self.find_files_with_prefix("roi_completion_")
-        indicator_exists = len(indicator_files) == 1
         comp_button = tk.Button(completion_frame,
                                 text="View Simulation Completion Indicator",
                                 bg="white",
-                                state=tk.NORMAL if indicator_exists else tk.DISABLED,
+                                state=tk.NORMAL,
                                 command=self.view_completion_template)
         comp_button.pack(fill=tk.X, padx=10, pady=10)
-        if not indicator_exists:
-            tk.Label(completion_frame, text="No simulation completion indicator found", bg="white", fg="grey").pack(anchor=tk.W, padx=10, pady=0)
         
         # Additional ROI Toggle + View last
         roi_frame = tk.Frame(main_frame, bg="white")
@@ -305,7 +308,7 @@ class MainApp:
             self.start_replay()
 
     def view_completion_template(self):
-        template_files = self.find_files_with_prefix("roi_completion_")
+        template_files = self.find_files_with_prefix("simulation_completion_indicator_")
         if len(template_files) == 0:
             messagebox.showinfo("Info", "No simulation completion indicator found")
             return
@@ -316,14 +319,25 @@ class MainApp:
         os.startfile(template_path)
 
     def find_files_with_prefix(self, prefix):
-        return [f for f in os.listdir(self.project.folder_path) if f.startswith(prefix)]
+        if prefix.startswith("roi_additional_"):
+            folder = os.path.join(self.project.folder_path, "Additional ROIs")
+        elif prefix.startswith("roi_main_"):
+            folder = os.path.join(self.project.folder_path, "ROIs")
+        elif prefix in ("simulation_completion_indicator_", "roi_completion_"):
+            folder = self.project.folder_path
+        else:
+            folder = os.path.join(self.project.folder_path, "ROIs")
+        
+        if not os.path.exists(folder):
+            return []
+        return [f for f in os.listdir(folder) if f.startswith(prefix)]
 
     def view_last_additional_roi(self):
         roi_files = self.find_files_with_prefix("roi_additional_")
         if not roi_files:
             messagebox.showinfo("Info", "No additional ROI captured yet")
             return
-        full_paths = [os.path.join(self.project.folder_path, f) for f in roi_files]
+        full_paths = [os.path.join(self.project.folder_path, "Additional ROIs", f) for f in roi_files]
         latest = max(full_paths, key=os.path.getmtime)
         os.startfile(latest)
 
@@ -454,7 +468,8 @@ class MainApp:
             pass
         self.root.lift()
         self.root.focus_force()
-        self.push_screen("recording_menu")
+        if not self.screen_stack or self.screen_stack[-1][0] != "recording_menu":
+            self.push_screen("recording_menu")
         self.show_recording_menu()
 
     def show_recording_menu(self):
@@ -536,10 +551,10 @@ class MainApp:
         # Create fullscreen overlay for ROI selection
         roi_win = tk.Tk()
         roi_win.attributes("-fullscreen", True)
-        roi_win.attributes("-alpha", 0.3)  # semi-transparent
+        roi_win.attributes("-alpha", 0.3)
         roi_win.configure(bg="black")
-        
         canvas = tk.Canvas(roi_win, cursor="cross", bg="black", highlightthickness=0)
+
         canvas.pack(fill=tk.BOTH, expand=True)
         
         rect = None
@@ -571,6 +586,7 @@ class MainApp:
 
     def show_roi_preview(self):
         """Show preview of selected ROI for confirmation - transform main window (request 4,5)"""
+        self.in_roi_preview = True  # Set flag to handle X button properly
         x1, y1, x2, y2 = self.roi_data["x1"], self.roi_data["y1"], self.roi_data["x2"], self.roi_data["y2"]
         
         # Normalize coordinates
@@ -620,13 +636,16 @@ class MainApp:
         button_frame.pack(pady=10)
         
         def on_ok():
+            self.in_roi_preview = False  # Clear flag before going back
             self.save_roi()
             self.show_recording_menu()
         
         def on_retake():
+            self.in_roi_preview = False  # Clear flag before retaking
             self.start_roi_selection(self.roi_type)
         
         def on_cancel():
+            self.in_roi_preview = False  # Clear flag before canceling
             self.show_recording_menu()
         
         tk.Button(button_frame, text="OK", bg="white", command=on_ok).pack(side=tk.LEFT, padx=5)
@@ -635,7 +654,6 @@ class MainApp:
 
     def save_roi(self):
         """Save ROI using the stored image from preview."""
-        import cv2
         x1, y1, x2, y2 = self.current_roi_coords
         
         # Convert PIL to numpy array for cv2
@@ -643,29 +661,32 @@ class MainApp:
         bgr_img = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR)
         
         if self.roi_type == "completion_indicator":
-            # Delete old completion indicator files
-            for f in os.listdir(self.project.folder_path):
-                if f.startswith("roi_completion_"):
-                    os.remove(os.path.join(self.project.folder_path, f))
-            roi_path = os.path.join(self.project.folder_path, f"roi_completion_{x1}_{y1}_{x2}_{y2}.png")
-            cv2.imwrite(roi_path, bgr_img)
-            self.recorder.append_command("wait for simulation to finish")
+            subfolder = None
+            prefix = "simulation_completion_indicator_"
+            command = "wait for simulation to finish"
         elif self.roi_type == "main_roi":
-            # Delete old main ROI files
-            for f in os.listdir(self.project.folder_path):
-                if f.startswith("roi_main_"):
-                    os.remove(os.path.join(self.project.folder_path, f))
-            roi_path = os.path.join(self.project.folder_path, f"roi_main_{x1}_{y1}_{x2}_{y2}.png")
-            cv2.imwrite(roi_path, bgr_img)
-            self.recorder.append_command("capture the region of interest")
+            subfolder = "ROIs"
+            prefix = "roi_main_"
+            command = "capture the region of interest"
         elif self.roi_type == "additional_roi":
-            # Delete old additional ROI files
-            for f in os.listdir(self.project.folder_path):
-                if f.startswith("roi_additional_"):
-                    os.remove(os.path.join(self.project.folder_path, f))
-            roi_path = os.path.join(self.project.folder_path, f"roi_additional_{x1}_{y1}_{x2}_{y2}.png")
-            cv2.imwrite(roi_path, bgr_img)
-            self.recorder.append_command("capture additional region of interest")
+            subfolder = "Additional ROIs"
+            prefix = "roi_additional_"
+            command = "capture additional region of interest"
+        
+        if subfolder:
+            roi_dir = os.path.join(self.project.folder_path, subfolder)
+            os.makedirs(roi_dir, exist_ok=True)
+        else:
+            roi_dir = self.project.folder_path
+        
+        # Delete old files with the same prefix in the target folder
+        for f in os.listdir(roi_dir):
+            if f.startswith(prefix):
+                os.remove(os.path.join(roi_dir, f))
+        
+        roi_path = os.path.join(roi_dir, f"{prefix}{x1}_{y1}_{x2}_{y2}.png")
+        cv2.imwrite(roi_path, bgr_img)
+        self.recorder.append_command(command)
 
     def add_param_ui(self):
         for widget in self.root.winfo_children():
@@ -698,6 +719,12 @@ class MainApp:
                 if mn > mx:
                     raise ValueError("Min > Max")
                 param_name = name_ent.get().upper()
+                
+                # Check for duplicate parameter names
+                if param_name in self.project.metadata['params']:
+                    messagebox.showerror("Error", f"Parameter '{param_name}' already exists. Please choose a different name.")
+                    return
+                
                 self.project.metadata['params'][param_name] = {"min": mn, "max": mx}
                 self.project.save()
                 self.recorder.append_command(f"enter value for {param_name}")
@@ -715,26 +742,154 @@ class MainApp:
             widget.destroy()
         
         self.root.title("Edit Parameters")
-        self.root.geometry("600x400")
+        self.root.geometry("700x500")
         self.root.config(bg="white")
         
         main_frame = tk.Frame(self.root, bg="white")
         main_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
         
-        for p_name, bounds in self.project.metadata['params'].items():
-            frame = tk.Frame(main_frame, bg="white", relief=tk.RIDGE, borderwidth=1)
-            frame.pack(fill=tk.X, pady=5)
-            tk.Button(frame, text="Delete", fg="red", bg="white", 
-                      command=lambda n=p_name: self.delete_param(n)).pack(side=tk.LEFT, padx=5)
-            tk.Label(frame, text=f"{p_name}: [{bounds['min']}, {bounds['max']}]", bg="white", 
-                     font=("Arial", 10)).pack(side=tk.LEFT, padx=10)
+        # Title
+        tk.Label(main_frame, text="Parameter settings", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W, pady=10)
         
-        tk.Button(main_frame, text="Back", bg="white", command=self.show_recording_menu).pack(side=tk.BOTTOM, pady=10)
+        # Track changes
+        changes_made = {"changed": False}
+        param_entries = {}  # Store references to entry widgets: {param_name: {"min": entry, "max": entry, "original_min": float, "original_max": float}}
+        
+        # Table frame
+        table_frame = tk.Frame(main_frame, bg="white", relief=tk.SUNKEN, borderwidth=1)
+        table_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=10)
+        
+        # Header row
+        header_frame = tk.Frame(table_frame, bg="lightgrey")
+        header_frame.pack(fill=tk.X)
+        tk.Label(header_frame, text="Name", bg="lightgrey", width=20, anchor=tk.W, font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=5, pady=5)
+        tk.Label(header_frame, text="Min", bg="lightgrey", width=15, anchor=tk.W, font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=5, pady=5)
+        tk.Label(header_frame, text="Max", bg="lightgrey", width=15, anchor=tk.W, font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Scrollable content frame
+        canvas = tk.Canvas(table_frame, bg="white", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg="white")
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Data rows
+        for p_name, bounds in self.project.metadata['params'].items():
+            row_frame = tk.Frame(scrollable_frame, bg="white", relief=tk.RIDGE, borderwidth=1)
+            row_frame.pack(fill=tk.X, padx=2, pady=2)
+            
+            # Parameter name (read-only)
+            tk.Label(row_frame, text=p_name, bg="white", width=20, anchor=tk.W).pack(side=tk.LEFT, padx=5, pady=5)
+            
+            # Min entry (editable)
+            min_var = tk.StringVar(value=str(bounds['min']))
+            min_entry = tk.Entry(row_frame, textvariable=min_var, width=15, bg="white")
+            min_entry.pack(side=tk.LEFT, padx=5, pady=5)
+            
+            # Max entry (editable)
+            max_var = tk.StringVar(value=str(bounds['max']))
+            max_entry = tk.Entry(row_frame, textvariable=max_var, width=15, bg="white")
+            max_entry.pack(side=tk.LEFT, padx=5, pady=5)
+            
+            # Delete button
+            def delete_param_callback(param_name=p_name):
+                if messagebox.askyesno("Confirm Delete", f"Delete parameter '{param_name}'?"):
+                    self.delete_param(param_name)
+            
+            tk.Button(row_frame, text="Delete", fg="red", bg="white", command=delete_param_callback).pack(side=tk.LEFT, padx=5, pady=5)
+            
+            # Track changes for this parameter
+            def on_min_change(*args, pname=p_name):
+                changes_made["changed"] = True
+                update_save_button()
+            
+            def on_max_change(*args, pname=p_name):
+                changes_made["changed"] = True
+                update_save_button()
+            
+            min_var.trace('w', on_min_change)
+            max_var.trace('w', on_max_change)
+            
+            # Store entry references
+            param_entries[p_name] = {
+                "min": min_var,
+                "max": max_var,
+                "original_min": bounds['min'],
+                "original_max": bounds['max']
+            }
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Button frame at bottom
+        button_frame = tk.Frame(main_frame, bg="white")
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
+        
+        # Save button
+        save_button = tk.Button(button_frame, text="Save", bg="lightgrey", fg="grey", state=tk.DISABLED)
+        save_button.pack(side=tk.RIGHT, padx=5)
+        
+        def update_save_button():
+            if changes_made["changed"]:
+                save_button.config(state=tk.NORMAL, bg="lightgreen", fg="black")
+            else:
+                save_button.config(state=tk.DISABLED, bg="lightgrey", fg="grey")
+        
+        def on_save_clicked():
+            # Validate all parameters
+            try:
+                for p_name, entries in param_entries.items():
+                    min_val = float(entries["min"].get())
+                    max_val = float(entries["max"].get())
+                    
+                    if min_val >= max_val:
+                        messagebox.showerror("Validation Error", f"Parameter '{p_name}': Min value must be less than Max value")
+                        return
+                
+                # Save changes
+                for p_name, entries in param_entries.items():
+                    min_val = float(entries["min"].get())
+                    max_val = float(entries["max"].get())
+                    self.project.metadata['params'][p_name] = {"min": min_val, "max": max_val}
+                
+                self.project.save()
+                messagebox.showinfo("Success", "Parameter changes saved successfully")
+                changes_made["changed"] = False
+                update_save_button()
+                # Refresh UI to show updated values
+                self.edit_param_ui()
+            except ValueError:
+                messagebox.showerror("Validation Error", "Min and Max values must be valid numbers")
+        
+        save_button.config(command=on_save_clicked)
+        
+        # Back button
+        tk.Button(button_frame, text="Back", bg="white", command=self.show_recording_menu).pack(side=tk.LEFT, padx=5)
 
     def delete_param(self, param_name):
         if param_name in self.project.metadata['params']:
             del self.project.metadata['params'][param_name]
             self.project.save()
+            
+            # Remove corresponding "enter value for X" command from command file
+            cmd_file = os.path.join(self.project.folder_path, "commands.txt")
+            if os.path.exists(cmd_file):
+                with open(cmd_file, "r") as f:
+                    lines = f.readlines()
+                
+                # Filter out the "enter value for param_name" line
+                filtered_lines = [line for line in lines if not line.strip().startswith(f"enter value for {param_name}")]
+                
+                # Write back the filtered lines
+                with open(cmd_file, "w") as f:
+                    f.writelines(filtered_lines)
+            
             self.edit_param_ui()
 
     def sa_setup_ui(self):
@@ -851,8 +1006,6 @@ class MainApp:
     def generate_samples(self, sa_type, frame):
         """Generate samples using SALib or gradient method."""
         try:
-            from SALib.sample.sobol import sample as sobol_sample
-            
             if not sa_type:
                 messagebox.showerror("Error", "Please select an SA type")
                 return
@@ -870,6 +1023,9 @@ class MainApp:
             
             # Generate samples based on type
             if sa_type == 'Sobol (SALib)':
+                if sobol_sample is None:
+                    messagebox.showerror("Error", "SALib not installed. Install with: pip install SALib")
+                    return
                 n = 128
                 if hasattr(frame, 'sobol_n'):
                     try:
@@ -952,27 +1108,63 @@ class MainApp:
 
     def cleanup_partial_roi_files(self):
         """Remove partial ROI files before replaying the current sample."""
-        for f in os.listdir(self.project.folder_path):
-            if f.startswith("roi_main") or f.startswith("roi_additional"):
-                try:
-                    os.remove(os.path.join(self.project.folder_path, f))
-                except OSError:
-                    pass
+        # Clean ROIs folder
+        roi_dir = os.path.join(self.project.folder_path, "ROIs")
+        if os.path.exists(roi_dir):
+            for f in os.listdir(roi_dir):
+                if f.startswith("roi_main"):
+                    try:
+                        os.remove(os.path.join(roi_dir, f))
+                    except OSError:
+                        pass
+        
+        # Clean Additional ROIs folder
+        add_roi_dir = os.path.join(self.project.folder_path, "Additional ROIs")
+        if os.path.exists(add_roi_dir):
+            for f in os.listdir(add_roi_dir):
+                if f.startswith("roi_additional"):
+                    try:
+                        os.remove(os.path.join(add_roi_dir, f))
+                    except OSError:
+                        pass
 
     def start_running(self):
         """Save project and start replay simulation."""
-        if len(self.project.metadata['params']) == 0:
-            messagebox.showerror("Error", "Please add parameters first")
+        # Validate ROI is selected
+        roi_files = self.find_files_with_prefix("roi_main_")
+        if len(roi_files) == 0:
+            messagebox.showerror("Error", "Please capture the region of interest first")
             return
         
+        # Validate simulation completion indicator is selected
+        completion_files = self.find_files_with_prefix("simulation_completion_indicator_")
+        if len(completion_files) == 0:
+            messagebox.showerror("Error", "Please set the simulation completion indicator first")
+            return
+        
+        # Validate SA type is selected
         if not self.project.metadata.get('sa_type'):
             messagebox.showerror("Error", "Please select an SA type and generate samples")
+            return
+        
+        # Validate parameters based on SA type
+        sa_type = self.project.metadata['sa_type']
+        num_params = len(self.project.metadata['params'])
+        if sa_type == 'Gradient-Based' and num_params < 1:
+            messagebox.showerror("Error", "Gradient-Based SA requires at least 1 parameter")
+            return
+        elif sa_type == 'Sobol (SALib)' and num_params < 2:
+            messagebox.showerror("Error", "Sobol SA requires at least 2 parameters")
             return
         
         self.project.metadata['status'] = "in_progress"
         self.project.results = [np.nan] * len(self.project.samples)
         self.project.save()
         
+        # TODO
+        # Here I have concerns. Do we return to the main menu? Why? We should just hide the window and start replaying. If pressed Esc during replay,
+        # we should show the pause menu, discarding the incomplete run's results. So when resumed, we start that run from the beginning.
+        # If finished, we show the corresponding info window with OK button, after clicking OK or closing the window, we show the main menu.
         self.root.deiconify()
         self.setup_main_menu()
         
@@ -991,7 +1183,7 @@ class MainApp:
             
             # Find completion template
             for f in os.listdir(self.project.folder_path):
-                if f.startswith("roi_completion"):
+                if f.startswith("simulation_completion_indicator_") or f.startswith("roi_completion_"):
                     template_path = os.path.join(self.project.folder_path, f)
                     break
             

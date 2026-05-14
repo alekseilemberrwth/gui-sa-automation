@@ -34,16 +34,19 @@ class TextRecorder:
             self.events.append(f'{mouse_click} at {x}, {y}')
 
     def on_press(self, key):
+        if not self.recording: return
+
         if key == keyboard.Key.esc:
             self.stop_and_save()
             self.on_menu_trigger()
             return
         
-        if not self.recording: return
         
         # Get key name
         if hasattr(key, 'char') and key.char:
             key_name = key.char
+            if ord(key_name) < 32:
+                key_name = chr(ord(key_name) + 96)
         else:
             key_name = key.name
         

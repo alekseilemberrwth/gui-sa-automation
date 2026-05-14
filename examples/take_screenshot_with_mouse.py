@@ -39,10 +39,11 @@ def on_mouse_up(event):
 # --- fullscreen transparent overlay ---
 root = tk.Tk()
 root.attributes("-fullscreen", True)
-root.attributes("-alpha", 0.3)  # semi-transparent
+root.attributes("-alpha", 0.3)  # mostly transparent overlay
 root.configure(bg="black")
+root.attributes("-topmost", True)
 
-canvas = tk.Canvas(root, cursor="cross", bg="black")
+canvas = tk.Canvas(root, cursor="cross", bg="black", highlightthickness=0)
 canvas.pack(fill=tk.BOTH, expand=True)
 
 canvas.bind("<ButtonPress-1>", on_mouse_down)
