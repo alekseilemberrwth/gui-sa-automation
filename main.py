@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import os
+import threading
 from project import Project
 from recorder import TextRecorder
 from replayer import TextReplayer
@@ -13,9 +14,26 @@ import cv2
 from SALib.sample.sobol import sample as sobol_sample
 
 
-# BUG (LLM, does not read this, it is a note for me):
+# URGENT TODO / BUG FIXES (LLM, does not read this, it is a note for me):
+# 0. All the windows should appear in the center of the screen, currently some of them appear in the top left corner.
 # 1. Re-capturing roi, additional roi and the simulation completion indicator in the pause menu should not add commands to the command file.
 # By recapturing I mean both Retaking and clicking the same button in the pause menu again (so taking from scratch).
+# 2. Currently the timeout logic is not implemented properly. When pressing Set simulation completion indicator button, we should have additional intermediate dialogue window
+# with 2 buttons: "Timeout" and "Image + Timeout". When clicking Timeout, user enters the timeout in seconds (float) in the text field (2 buttons: ok and cancel), and when clicking "OK", if the input is valid, we add a command "wait for simulation to finish with timeout {timeout_seconds}" to the command file.
+# When clicking "Image + Timeout", user first selects the image for simulation completion indicator, just like now, and then when reviewing, there should be an additional text input field "Timeout (seconds)", default to 30 seconds,
+# when user clicks "OK", validate his input, if valid, add a command "wait for simulation to finish with timeout {timeout_seconds}" to the command file.
+# The program should understand whether to capture the screenshot for the simulation completion indicator or not during the simulation runs based on the user choice described above.
+# If the timeout is exceeded in any of the 2 cases, the program should discard the last simulation run, show an error message and after user clicks OK, show him the pause menu.
+# Currently, the timeout event is ignored and the program just continues doing the next commands, which can lead to errors and wrong results.
+# 3. We should not store roi and additional roi, captured by user, as images. We should store only their coordinates in metadata. When we capture them in simulations,
+# we do store those rois and additional rois as images in the corresponding folders with names "roi_main_{sample_index}.png" and "roi_additional_{sample_index}.png".
+# This will require some implementation changes. After they are made, the corresponding "elifs" (elif cmd == "capture the region of interest"
+# and elif cmd == "capture additional region of interest":) in the replayer should be implemented to capture the rois based on the coordinates stored in metadata and save
+# them as images with corresponding names.
+# 4. We should record delays between commands in the command file, so that when we replay, we can have the same delays. When we click Esc to pause recording,
+# and while we are in the pause menu, we should not record the time delay. But when we resume recording, we should continue recording the delays.
+# 5. Something weird happens with simulation completion indicator matching. Why isn't abs difference 0? Maybe we save template differently from how we capture the screen during replay?
+# Gonna check the 3 images: the template, the screen region captured during 1st replay and the screen region captured during 2nd replay, and see if they are the same or different.
 
 # TODO (LLM, does not read this, it is a note for me):
 # 1. When user clicks "Save & Start Running Simulations", make sure command file is valid:
@@ -38,6 +56,8 @@ class MainApp:
         self.roi_selection = None
         self.recording_paused = False
         self.replay_paused = False
+        self.replay_stop_requested = False
+        self._replay_thread = None
         self.current_sample_index = 0
         self.in_roi_preview = False  # Track if we're currently showing ROI preview
         
@@ -110,6 +130,7 @@ class MainApp:
             return
         
         self.push_screen("project_dashboard")
+        self.vision_engine = VisionEngine(self.project.folder_path)
         self.show_project_dashboard()
 
     def show_project_dashboard(self):
@@ -305,7 +326,11 @@ class MainApp:
 
     def resume_sims(self):
         if messagebox.askokcancel("Confirm", "Resume simulation running?"):
-            self.start_replay()
+            self.root.iconify()
+            self.replay_paused = False
+            self.replay_stop_requested = False
+            self._replay_thread = threading.Thread(target=self.start_replay, daemon=True)
+            self._replay_thread.start()
 
     def view_completion_template(self):
         template_files = self.find_files_with_prefix("simulation_completion_indicator_")
@@ -507,6 +532,12 @@ class MainApp:
     def pause_replay(self):
         """Pause replay and show pause menu."""
         self.replay_paused = True
+        # Must update UI from the main thread
+        self.root.after(0, self._show_replay_paused_ui)
+
+    def _show_replay_paused_ui(self):
+        self.root.deiconify()
+        self.root.lift()
         self.show_replay_pause_menu()
 
     def show_replay_pause_menu(self):
@@ -530,13 +561,14 @@ class MainApp:
                   command=self.stop_replay).pack(fill=tk.X, padx=20, pady=10)
 
     def resume_replay(self):
-        """Resume replay."""
+        """Resume replay - unblock the spinning thread and hide the window."""
         self.replay_paused = False
-        self.setup_main_menu()
+        self.root.iconify()
 
     def stop_replay(self):
         """Stop replay and return to main menu."""
-        self.replay_paused = False
+        self.replay_stop_requested = True
+        self.replay_paused = False  # Unblock the spin-wait so the thread can check the stop flag
         self.setup_main_menu()
 
     def view_cmd_file(self):
@@ -1160,63 +1192,91 @@ class MainApp:
         self.project.metadata['status'] = "in_progress"
         self.project.results = [np.nan] * len(self.project.samples)
         self.project.save()
-        
-        # TODO
-        # Here I have concerns. Do we return to the main menu? Why? We should just hide the window and start replaying. If pressed Esc during replay,
-        # we should show the pause menu, discarding the incomplete run's results. So when resumed, we start that run from the beginning.
-        # If finished, we show the corresponding info window with OK button, after clicking OK or closing the window, we show the main menu.
-        self.root.deiconify()
-        self.setup_main_menu()
-        
-        # Start replay synchronously
-        self.start_replay()
+
+        # Hide the window during replay; show pause menu if Esc is pressed.
+        # Replay runs in a background thread so the Tkinter event loop stays alive.
+        self.root.iconify()
+        self.replay_paused = False
+        self.replay_stop_requested = False
+        self._replay_thread = threading.Thread(target=self.start_replay, daemon=True)
+        self._replay_thread.start()
 
     def start_replay(self):
-        """Start replaying commands for all samples."""
+        """Start replaying commands for all samples. Runs in a background thread."""
         try:
-            # Bind Esc for pause
-            self.root.bind('<Escape>', lambda e: self.pause_replay())
-            
             cmd_file = os.path.join(self.project.folder_path, "commands.txt")
             replayer = TextReplayer()
             template_path = None
-            
+
             # Find completion template
             for f in os.listdir(self.project.folder_path):
                 if f.startswith("simulation_completion_indicator_") or f.startswith("roi_completion_"):
                     template_path = os.path.join(self.project.folder_path, f)
                     break
-            
+
             # Run simulations
             param_names = list(self.project.metadata['params'].keys())
             for i in range(len(self.project.samples)):
+                if self.replay_stop_requested:
+                    return
+
                 self.current_sample_index = i
-                if np.isnan(self.project.results[i]):
-                    # Check if paused before starting this sample, and discard any partial ROI files
-                    self.cleanup_partial_roi_files()
-                    while self.replay_paused:
-                        self.root.update()
-                        time.sleep(0.1)
-                    
-                    param_dict = {param_names[j]: self.project.samples[i][j] for j in range(len(param_names))}
-                    replayer.execute_run(cmd_file, param_dict, self.vision_engine, template_path)
-                    
-                    # Extract result from main ROI
-                    roi_files = [f for f in os.listdir(self.project.folder_path) if f.startswith("roi_main")]
-                    if roi_files:
-                        # Extract average RGB value
-                        pass  # TODO: implement result extraction
-                    
-                    self.project.results[i] = np.nan  # Placeholder
-            
+                if not isinstance(self.project.results[i], float) or not np.isnan(self.project.results[i]):
+                    continue  # Already has a result, skip
+
+                # Clean up partial files from any previous attempt at this sample
+                self.cleanup_partial_roi_files()
+
+                # Spin-wait while paused (background thread is safe here)
+                while self.replay_paused:
+                    if self.replay_stop_requested:
+                        return
+                    time.sleep(0.1)
+
+                param_dict = {param_names[j]: self.project.samples[i][j] for j in range(len(param_names))}
+                replayer.execute_run(cmd_file, param_dict, self.vision_engine, template_path)
+
+                # Extract result from main ROI using colormap inversion
+                roi_dir = os.path.join(self.project.folder_path, "ROIs")
+                roi_files = [f for f in os.listdir(roi_dir)] if os.path.exists(roi_dir) else []
+                roi_files = [f for f in roi_files if f.startswith("roi_main_")]
+                if roi_files:
+                    roi_path = os.path.join(roi_dir, roi_files[0])
+                    avg_rgb = self.vision_engine.extract_roi_average(None) if self.vision_engine else None
+                    if avg_rgb is None:
+                        # Fall back to reading saved file
+                        img = cv2.imread(roi_path)
+                        if img is not None:
+                            rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                            avg_rgb = rgb.mean(axis=0).mean(axis=0)
+                    if avg_rgb is not None and self.vision_engine is not None:
+                        cmap = self.project.metadata['colormap']
+                        scalar = self.vision_engine.rgb_to_scalar(
+                            avg_rgb, cmap['name'], cmap['min'], cmap['max'])
+                        self.project.results[i] = scalar
+                    else:
+                        self.project.results[i] = np.nan
+                else:
+                    self.project.results[i] = np.nan
+
+                self.project.save()
+
             self.project.metadata['status'] = "completed"
             self.project.save()
-            messagebox.showinfo("Success", "All simulations completed!")
-            
+
+            # Schedule UI update back on the main thread
+            self.root.after(0, self._on_replay_finished)
+
         except Exception as e:
-            messagebox.showerror("Error", f"Replay failed: {str(e)}")
-        finally:
-            self.root.unbind('<Escape>')
+            err_msg = str(e)
+            self.root.after(0, lambda: messagebox.showerror("Error", f"Replay failed: {err_msg}"))
+            self.root.after(0, self.root.deiconify)
+
+    def _on_replay_finished(self):
+        """Called on the main thread when replay completes successfully."""
+        self.root.deiconify()
+        messagebox.showinfo("Success", "All simulations completed!")
+        self.setup_main_menu()
 
 if __name__ == "__main__":
     root = tk.Tk()

@@ -25,7 +25,7 @@ class VisionEngine:
         """
         Checks if the are on the screen matches template using mean absolute deviation threshold. 
         Template path should be of a form {name_x1_y1_x2_y2}.png where (x1, y1) and (x2, y2) are
-        the bottom-left and top-right corners of the template region in screen coordinates.
+        the top-left and bottom-right corners of the template region in screen coordinates.
         """
         template = cv2.imread(template_path)
         if template is None:
@@ -34,24 +34,28 @@ class VisionEngine:
         # Extract coordinates from filename
         try:
             name_part = template_path.split("/")[-1].split(".")[0]
-            _, x1, y1, x2, y2 = name_part.split("_")
+            _, _, _, x1, y1, x2, y2 = name_part.split("_")
             x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
         except Exception as e:
-            raise ValueError(f"Filename must be in format {{name_x1_y1_x2_y2}}.png. Error: {e}")
+            raise ValueError(f"Filename must be in format {{simulation_completion_indicator_x1_y1_x2_y2}}.png. Error: {e}")
         
-        screen_img = self.grab_screen({'top': y2, 'left': x1, 'width': x2 - x1, 'height': y1 - y2})
+        screen_img = self.grab_screen({'top': y1, 'left': x1, 'width': x2 - x1, 'height': y2 - y1})
+
+        # Save to png
+        
         
         if screen_img.shape != template.shape:
             raise ValueError("Template and screen region shapes do not match.")
         
         mad = np.mean(np.abs(screen_img.astype("float") - template.astype("float")))
+        print(f"Mean Absolute Deviation: {mad}")
         return mad < threshold
 
-    def wait_for_completion(self, template_path, max_wait=300, check_interval=1.0):
+    def wait_for_completion(self, template_path, max_wait=10, check_interval=1.0):
         """Waits for simulation to complete by checking template match."""
         if not self.project_path or not os.path.exists(template_path):
             # If no template, just wait a default amount
-            time.sleep(5)
+            time.sleep(max_wait)
             return
         
         start_time = time.time()
@@ -59,8 +63,8 @@ class VisionEngine:
             try:
                 if self.is_completed(template_path):
                     return True
-            except:
-                pass
+            except Exception as e:
+                print(f"Error during completion check: {e}")
             time.sleep(check_interval)
         return False
 
@@ -79,7 +83,7 @@ class VisionEngine:
         if not self.project_path:
             return None
         
-        # Request 8: Delete old completion indicator file if exists
+        # Delete old completion indicator file if exists
         for f in os.listdir(self.project_path):
             if f.startswith("roi_completion_"):
                 os.remove(os.path.join(self.project_path, f))
@@ -96,13 +100,13 @@ class VisionEngine:
         return roi_path
 
     def extract_and_store_main_roi(self, roi_coords):
-        """Extracts and stores main ROI screenshot (request 9: replace old file).
+        """Extracts and stores main ROI screenshot
         roi_coords: (x1, y1, x2, y2) where (x1,y1) is top-left, (x2,y2) is bottom-right
         """
         if not self.project_path:
             return None
         
-        # Request 9: Delete old main ROI file if exists
+        # Delete old main ROI file if exists
         for f in os.listdir(self.project_path):
             if f.startswith("roi_main_"):
                 os.remove(os.path.join(self.project_path, f))
@@ -120,7 +124,7 @@ class VisionEngine:
         return roi_path
 
     def extract_and_store_additional_roi(self, roi_coords):
-        """Extracts and stores additional ROI screenshot (request 9: replace old file)."""
+        """Extracts and stores additional ROI screenshot"""
         if not self.project_path:
             return None
         

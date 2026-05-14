@@ -8,6 +8,13 @@ class TextReplayer:
 
     def inject_value(self, val):
         """Injects a numerical value by simulating keyboard presses."""
+        # Clear existing input first
+        self.k_ctrl.press(keyboard.Key.ctrl)
+        self.k_ctrl.press('a')
+        self.k_ctrl.release('a')
+        self.k_ctrl.release(keyboard.Key.ctrl)
+        self.k_ctrl.press(keyboard.Key.backspace)
+
         val_str = str(val)
         for char in val_str:
             try:
@@ -37,21 +44,20 @@ class TextReplayer:
                 continue
 
             # Parse and execute commands
-            if cmd.startswith("move mouse to"):
-                coords_str = cmd.replace("move mouse to ", "").strip()
+            if cmd.startswith("lmb click"):
+                coords_str = cmd.replace("lmb click at ", "").strip()
                 coords = coords_str.split(", ")
                 x, y = int(coords[0]), int(coords[1])
                 self.m_ctrl.position = (x, y)
-                time.sleep(0.05)
-
-            elif cmd == "lmb click":
-                self.m_ctrl.press(mouse.Button.left)
-                self.m_ctrl.release(mouse.Button.left)
+                self.m_ctrl.click(mouse.Button.left)
                 time.sleep(0.1)
 
-            elif cmd == "rmb click":
-                self.m_ctrl.press(mouse.Button.right)
-                self.m_ctrl.release(mouse.Button.right)
+            elif cmd.startswith("rmb click"):
+                coords_str = cmd.replace("rmb click at ", "").strip()
+                coords = coords_str.split(", ")
+                x, y = int(coords[0]), int(coords[1])
+                self.m_ctrl.position = (x, y)
+                self.m_ctrl.click(mouse.Button.right)
                 time.sleep(0.1)
 
             elif cmd.startswith("press key"):
@@ -85,6 +91,7 @@ class TextReplayer:
                 time.sleep(0.1)
 
             elif cmd == "wait for simulation to finish":
+                print(f"Waiting for simulation to finish with template path: {template_path}")
                 if template_path:
                     vision_engine.wait_for_completion(template_path)
                 else:
