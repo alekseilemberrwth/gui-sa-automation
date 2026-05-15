@@ -1,3 +1,8 @@
+# Good point to demonstrate local gradient calculation:
+# x1 = 1.0, x2 = 1.0 +- 0.1, x3 = 2.1 +- 0.1;
+# a = 5.05, b = 0.2;
+# colorbar min max: 4.0, 8.0
+
 import tkinter as tk
 from tkinter import ttk
 import numpy as np

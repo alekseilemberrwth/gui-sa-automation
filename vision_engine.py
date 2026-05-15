@@ -18,7 +18,7 @@ class VisionEngine:
         img = np.array(screenshot)
         return cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
 
-    def is_completed(self, template_path, roi_coords, threshold=10.0):
+    def is_completed(self, template_path, roi_coords, threshold=1e-7):
         template = cv2.imread(template_path)
         if template is None:
             raise ValueError(f"Template image not found at {template_path}")
@@ -35,13 +35,13 @@ class VisionEngine:
             raise ValueError("Template and screen region shapes do not match.")
         
         mad = np.mean(np.abs(screen_img.astype("float") - template.astype("float")))
-        print(f"Completion check - MAD: {mad:.4f}, Threshold: {threshold}")
-        return mad < threshold
+        # print(f"Completion check - MAD: {mad:.4f}, Threshold: {threshold}")
+        return mad <= threshold
 
     def wait_for_completion(self, template_path, roi_coords, max_wait=10.0, check_interval=1.0):
         if not self.project_path or not template_path or not os.path.exists(template_path):
-            print("Project path or template path not set or template file does not exist. Falling back to fixed wait.")
-            print(f"self.project_path: {self.project_path}, template_path: {template_path}")
+            # print("Project path or template path not set or template file does not exist. Falling back to fixed wait.")
+            # print(f"self.project_path: {self.project_path}, template_path: {template_path}")
             time.sleep(max_wait)
             return True
         
@@ -54,30 +54,6 @@ class VisionEngine:
                 print(f"Error during completion check: {e}")
             time.sleep(check_interval)
         return False
-
-    # def extract_roi_average(self, bbox):
-    #     screenshot = self.sct.grab(bbox)
-    #     img = np.array(screenshot)
-    #     rgb_img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
-    #     avg_color = rgb_img.mean(axis=0).mean(axis=0)
-    #     return avg_color
-
-    def extract_and_store_completion_indicator(self, roi_coords):
-        if not self.project_path: return None
-        
-        for f in os.listdir(self.project_path):
-            if f.startswith("roi_completion_"):
-                os.remove(os.path.join(self.project_path, f))
-        
-        x1, y1, x2, y2 = roi_coords
-        bbox = {'left': x1, 'top': y1, 'width': x2 - x1, 'height': y2 - y1}
-        screenshot = self.sct.grab(bbox)
-        img = np.array(screenshot)
-        rgb_img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
-        
-        roi_path = os.path.join(self.project_path, f"roi_completion_{x1}_{y1}_{x2}_{y2}.png")
-        cv2.imwrite(roi_path, cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR))
-        return roi_path
 
     def extract_and_store_main_roi(self, roi_coords, sample_index):
         if not self.project_path: return None

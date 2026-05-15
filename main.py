@@ -18,6 +18,11 @@
 # 3) there is only command of each of these types: "wait for simulation to finish", "capture additional region of interest", "capture the region of interest".
 # 4) no parameter values can be entered after "wait for simulation to finish" command.
 # 5) "capture the region of interest" command must be after "wait for simulation to finish" command.
+# 2. Set up logging.
+# 3. Gradient barplot.
+# 1) Change the orientation to horizontal, parameter names should be displayed at the center, to the right goes the positive gradient bar, to the left goes the negative gradient bar.
+# Each variable's bar should be twice as narrow as it is now. Also on top of each bar (to the right of the bar's end for positive bars and to the left for negatives)
+# show the exact value of the gradient.
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
@@ -141,18 +146,6 @@ class MainApp:
         if err:
             messagebox.showerror("Invalid Project", err)
             return
-
-        # TODO put in .validate() 
-        # if 'completion_roi' in self.project.metadata and self.project.metadata['completion_roi'] is not None:
-        #     roi_path = os.path.join(folder, "simulation_completion_indicator.png")
-        #     if os.path.exists(roi_path):
-        #         img = cv2.imread(roi_path)
-        #         if img is not None:
-        #             h, w = img.shape[:2]
-        #             x1, y1, x2, y2 = self.project.metadata['completion_roi']
-        #             if abs((x2 - x1) - w) > 0 or abs((y2 - y1) - h) > 0:
-        #                 messagebox.showerror("Error", "Completion indicator image dimensions do not match coordinates in metadata.")
-        #                 return
         
         self.push_screen("project_dashboard")
         self.vision_engine = VisionEngine(self.project.folder_path)
@@ -337,7 +330,7 @@ class MainApp:
             self._replay_thread.start()
 
     def view_completion_template(self):
-        template_files = self.find_files_with_prefix("simulation_completion_indicator_")
+        template_files = self.find_files_with_prefix("simulation_completion_indicator")
         if len(template_files) == 0:
             messagebox.showinfo("Info", "No simulation completion indicator found")
             return
@@ -392,7 +385,7 @@ class MainApp:
             self._add_unique_command(cmd, prefix="wait for simulation to finish")
             # Delete any old completion templates since we are using pure timeout
             for f in os.listdir(self.project.folder_path):
-                if f.startswith("simulation_completion_indicator_"):
+                if f.startswith("simulation_completion_indicator"):
                     os.remove(os.path.join(self.project.folder_path, f))
             messagebox.showinfo("Success", f"Timeout set to {timeout} seconds.")
 
@@ -697,7 +690,7 @@ class MainApp:
         if self.roi_type == "completion_indicator":
             rgb_img = np.array(self.current_roi_image)
             bgr_img = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR)
-            prefix = "simulation_completion_indicator" # <--- Removed trailing underscore
+            prefix = "simulation_completion_indicator"
             cmd = f"wait for simulation to finish with timeout {timeout}"
 
             # Delete old indicator files
@@ -705,7 +698,7 @@ class MainApp:
                 if f.startswith(prefix):
                     os.remove(os.path.join(self.project.folder_path, f))
 
-            roi_path = os.path.join(self.project.folder_path, f"{prefix}.png") # <--- Simplified name
+            roi_path = os.path.join(self.project.folder_path, f"{prefix}.png")
             cv2.imwrite(roi_path, bgr_img)
             
             self.project.metadata['completion_roi'] = self.current_roi_coords
@@ -1098,7 +1091,7 @@ class MainApp:
             template_path = None
 
             for f in os.listdir(self.project.folder_path):
-                if f.startswith("simulation_completion_indicator_") or f.startswith("roi_completion_"):
+                if f.startswith("simulation_completion_indicator"):
                     template_path = os.path.join(self.project.folder_path, f)
                     break
 
