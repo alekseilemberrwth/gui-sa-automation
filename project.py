@@ -13,7 +13,10 @@ class Project:
             "sa_params": {},
             "colormap": {"name": "viridis", "source": "chosen by user", "min": 0.0, "max": 100.0},
             "additional_roi_status": "not capturing",
-            "n_required": 0
+            "n_required": 0,
+            # "main_roi": None,
+            # "additional_roi": None,
+            "completion_roi": None
         }
         self.results = []
         self.samples = []
