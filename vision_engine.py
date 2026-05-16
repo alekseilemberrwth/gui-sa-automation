@@ -97,5 +97,5 @@ class VisionEngine:
         distances = np.sqrt(np.sum((colors - rgb)**2, axis=1))
         closest_idx = np.argmin(distances)
         
-        normalized_val = closest_idx / 999999  # Normalize to [0, 1]
+        normalized_val = closest_idx / (1000000 - 1)  # Normalize to [0, 1]
         return val_min + (normalized_val * (val_max - val_min))

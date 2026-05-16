@@ -23,8 +23,7 @@ class TextRecorder:
     def _record_delay(self):
         if self.last_event_time:
             delay = time.time() - self.last_event_time
-            if delay > 0.01:
-                self.events.append(f"wait {delay:.4f}")
+            self.events.append(f"wait {delay:.4f}")
         self.last_event_time = time.time()
 
     def stop_and_save(self):
@@ -47,12 +46,13 @@ class TextRecorder:
     def on_press(self, key):
         if not self.recording: return
 
+        self._record_delay()
+
         if key == keyboard.Key.esc:
             self.stop_and_save()
             self.on_menu_trigger()
             return
         
-        self._record_delay()
         if hasattr(key, 'char') and key.char:
             key_name = key.char
             if ord(key_name) < 32:
@@ -75,7 +75,3 @@ class TextRecorder:
             key_name = key.name
         
         self.events.append(f"release key {key_name}")
-
-    def append_command(self, cmd):
-        with open(self.cmd_file_path, "a") as f:
-            f.write(cmd + "\n")

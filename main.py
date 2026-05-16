@@ -1,15 +1,10 @@
 # BUG
-# 3. I open existing project, press "View SA results", close results window, close project window, close main menu. App is not finishing after it. This is a bug.
-# 4. The delay between 2 actions, interrupted by Esc press, should be (delay before Esc + delay after Esc).
-# Currently when I click lmb, then press Esc, then capture the region of interest, the delay between lmb click and capture is zero, which is incorrect.
-# Also then I click Esc to capture additional roi, the delay between the commands "capture the region of interest" and "capture additional region of interest" is also zero,
-# which is also incorrect.
-# 5. When I open existing SA, min and max colormap value are restored to default instead of being loaded from metadata. I saved them in the previous launch of the app, but seemingly
-# they are not being stored in metadata or not loaded correctly.
-# 6. The results.npy should contain the average pixel of the main roi for each sample index. I do not know what this array contains now.
-# The gradients and the sobol indices should be calculated when I click "View SA results" button.
-# Because only at that point of time the min and max colormap values are known for sure, which are needed for the rgb to scalar function. Also, when showing gradient report,
-# show also colormap name and min and max values which were used for the gradient calculation.
+# 0. Go through every place where the results of the simulation runs are used. Change the implementation for absent results from using a single nan or None to using
+# a 3-element numpy array of nans.
+# 1. Gradient barplot. Change the orientation to horizontal, parameter names should be displayed at the center, to the right goes the positive gradient bar,
+# to the left goes the negative gradient bar.
+# Each variable's bar should be twice as narrow as it is now. Also on top of each bar (to the right of the bar's end for positive bars and to the left for negatives)
+# show the exact value of the gradient.
 
 # TODO
 # 1. When user clicks "Save & Start Running Simulations", make sure command file is valid:
@@ -19,10 +14,8 @@
 # 4) no parameter values can be entered after "wait for simulation to finish" command.
 # 5) "capture the region of interest" command must be after "wait for simulation to finish" command.
 # 2. Set up logging.
-# 3. Gradient barplot.
-# 1) Change the orientation to horizontal, parameter names should be displayed at the center, to the right goes the positive gradient bar, to the left goes the negative gradient bar.
-# Each variable's bar should be twice as narrow as it is now. Also on top of each bar (to the right of the bar's end for positive bars and to the left for negatives)
-# show the exact value of the gradient.
+# 3. Review the window stack management and app closing. There was an issue with the app not closing properly after viewing results and closing all windows.
+# It seems that we fixed it by adding os._exit(0) in quit_app, but I am not sure if this is the correct way to do it.
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
@@ -102,9 +95,13 @@ class MainApp:
                 prev_screen, prev_data = self.screen_stack[-1]
                 self.show_screen(prev_screen, prev_data)
             else:
-                self.root.destroy()
+                self.quit_app()
         else:
-            self.root.destroy()
+            self.quit_app()
+
+    def quit_app(self):
+        self.root.destroy()
+        os._exit(0)
 
     def push_screen(self, screen_name, screen_data=None):
         self.screen_stack.append((screen_name, screen_data))
@@ -402,17 +399,21 @@ class MainApp:
     def show_gradient_report(self):
         report_win = tk.Toplevel(self.root)
         report_win.title("Gradient-Based SA Results")
-        report_win.geometry("600x500")
+        report_win.geometry("600x550")
         
         param_names = list(self.project.metadata['params'].keys())
         grad_params = self.project.metadata.get('sa_params', {})
         results = self.project.results
-
-        print("In show_gradient_report:")
-        print(f"Param names: {param_names}")
-        print(f"Grad params: {grad_params}")
-        print(f"Results: {results}")
+        cmap = self.project.metadata['colormap']
         
+        scalars = []
+        for res in results:
+            if res is None or (isinstance(res, float) and np.isnan(res)) or (isinstance(res, list) and np.isnan(res[0])):
+                scalars.append(np.nan)
+            else:
+                scalar = self.vision_engine.rgb_to_scalar(np.array(res), cmap['name'], cmap['min'], cmap['max'])
+                scalars.append(scalar)
+
         gradients = []
         points = []
         for i, name in enumerate(param_names):
@@ -421,11 +422,9 @@ class MainApp:
             point = gp.get('point')
             points.append(f"{name}: {point}")
             
-            res_neg = results[2*i]
-            res_pos = results[2*i + 1]
+            res_neg = scalars[2*i]
+            res_pos = scalars[2*i + 1]
 
-            print(f"res_neg={res_neg}, res_pos={res_pos}")
-            
             if np.isnan(res_neg) or np.isnan(res_pos):
                 print(f"Warning: NaN result for parameter {name} at point {point} with step {step}. Setting gradient to 0.")
                 grad = 0.0
@@ -437,6 +436,7 @@ class MainApp:
         info_frame.pack(fill=tk.X, padx=10, pady=10)
         tk.Label(info_frame, text="Evaluation Point:", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W)
         tk.Label(info_frame, text=", ".join(points), bg="white").pack(anchor=tk.W)
+        tk.Label(info_frame, text=f"Colormap: {cmap['name']} (Min: {cmap['min']}, Max: {cmap['max']})", bg="white").pack(anchor=tk.W)
         
         fig, ax = plt.subplots(figsize=(6, 4))
         ax.bar(param_names, gradients, color='skyblue')
@@ -491,7 +491,6 @@ class MainApp:
         self.project.save()
         
         cmd_file = os.path.join(folder, "commands.txt")
-        # self.recorder = TextRecorder(cmd_file, self.show_recording_menu_from_pause)
         self.recorder = TextRecorder(cmd_file, lambda: self.root.after(0, self.show_recording_menu_from_pause))
         self.vision_engine = VisionEngine(folder)
         
@@ -1071,7 +1070,7 @@ class MainApp:
             return
         
         self.project.metadata['status'] = "in_progress"
-        self.project.results = [np.nan] * len(self.project.samples)
+        self.project.results = [None] * len(self.project.samples)
         self.project.save()
 
         self.root.iconify()
@@ -1102,9 +1101,11 @@ class MainApp:
                 if self.replay_stop_requested: return
                 self.current_sample_index = i
                 
-                if isinstance(self.project.results[i], float) and not np.isnan(self.project.results[i]):
-                    i += 1
-                    continue
+                res_val = self.project.results[i]
+                if res_val is not None:
+                    if isinstance(res_val, list) and len(res_val) == 3 and not np.isnan(res_val[0]):
+                        i += 1
+                        continue
                 
                 self.cleanup_partial_roi_files()
                 
@@ -1132,13 +1133,10 @@ class MainApp:
                         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                         avg_rgb = rgb.mean(axis=0).mean(axis=0)
                 
-                if avg_rgb is not None and self.vision_engine is not None:
-                    cmap = self.project.metadata['colormap']
-                    scalar = self.vision_engine.rgb_to_scalar(
-                        avg_rgb, cmap['name'], cmap['min'], cmap['max'])
-                    self.project.results[i] = scalar
+                if avg_rgb is not None:
+                    self.project.results[i] = avg_rgb.tolist()
                 else:
-                    self.project.results[i] = np.nan
+                    self.project.results[i] = [np.nan, np.nan, np.nan]
 
                 self.project.save()
                 i += 1

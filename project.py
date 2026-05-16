@@ -80,6 +80,5 @@ class Project:
                     f.write(f"{target}\n" if enable else f"# {target}\n")
                 else:
                     f.write(line)
-        # Request 10: Use "not capturing" instead of "capturing stopped"
         self.metadata["additional_roi_status"] = "capturing" if enable else "not capturing"
         self.save()
