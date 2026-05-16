@@ -1,13 +1,14 @@
 # Good point to demonstrate local gradient calculation:
-# x1 = 1.0, x2 = 1.0 +- 0.1, x3 = 2.1 +- 0.1;
+# x1 = -1.0 +- 0.1, x2 = 1.0 +- 0.1, x3 = 2.1 +- 0.1;
 # a = 5.05, b = 0.2;
-# colorbar min max: 4.0, 8.0
+# colorbar min max: -10, 14
 
 import tkinter as tk
 from tkinter import ttk
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import matplotlib as mpl
 import random
 import time
 
@@ -38,6 +39,7 @@ class BenchmarkApp:
             'colorbar_max': '',
             'sim_time_min': 0.0,
             'sim_time_max': 4.0,
+            'cmap_N': 100000, # TODO make editable?
         }
         self.current = self.defaults.copy()
         
@@ -285,7 +287,10 @@ class BenchmarkApp:
                 vmax = self.Z.max()
         self.ax.clear()
         self.ax.set_facecolor('white')
-        c = self.ax.imshow(self.Z, extent=[self.current['a_min'], self.current['a_max'], self.current['b_min'], self.current['b_max']], origin='lower', cmap=self.current['colormap'], vmin=vmin, vmax=vmax)
+        # print(f'Synthetic benchmark uses cmap {self.current['colormap']} with N = {mpl.colormaps[self.current['colormap']].resampled(self.current['cmap_N']).N}')
+        c = self.ax.imshow(self.Z, extent=[self.current['a_min'], self.current['a_max'], self.current['b_min'], self.current['b_max']], origin='lower',
+                           cmap=mpl.colormaps[self.current['colormap']].resampled(self.current['cmap_N']), #self.current['colormap'],
+                           vmin=vmin, vmax=vmax)
         if not hasattr(self, 'cbar'):
             self.cbar = self.fig.colorbar(c, ax=self.ax)
         else:

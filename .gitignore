@@ -59,3 +59,6 @@ __pycache__/
 *.tar.gz
 *.rar
 *.7z
+
+
+examples/

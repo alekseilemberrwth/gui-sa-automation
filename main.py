@@ -1,10 +1,5 @@
 # BUG
-# 0. Go through every place where the results of the simulation runs are used. Change the implementation for absent results from using a single nan or None to using
-# a 3-element numpy array of nans.
-# 1. Gradient barplot. Change the orientation to horizontal, parameter names should be displayed at the center, to the right goes the positive gradient bar,
-# to the left goes the negative gradient bar.
-# Each variable's bar should be twice as narrow as it is now. Also on top of each bar (to the right of the bar's end for positive bars and to the left for negatives)
-# show the exact value of the gradient.
+# 2. When selecting timeout vs image + timeout, the pause menu should transform into this new window (and back if we close it), instead of opening a new one on top of it.
 
 # TODO
 # 1. When user clicks "Save & Start Running Simulations", make sure command file is valid:
@@ -397,22 +392,24 @@ class MainApp:
             self.show_gradient_report()
 
     def show_gradient_report(self):
-        report_win = tk.Toplevel(self.root)
-        report_win.title("Gradient-Based SA Results")
-        report_win.geometry("600x550")
-        
         param_names = list(self.project.metadata['params'].keys())
         grad_params = self.project.metadata.get('sa_params', {})
         results = self.project.results
         cmap = self.project.metadata['colormap']
+
+        report_win = tk.Toplevel(self.root)
+        report_win.title("Gradient-Based SA Results")
+        report_win.geometry(f"600x{len(param_names)*100}")
         
+        # Convert results to scalars using the colormap inversion
         scalars = []
         for res in results:
-            if res is None or (isinstance(res, float) and np.isnan(res)) or (isinstance(res, list) and np.isnan(res[0])):
-                scalars.append(np.nan)
+            if res[0] is np.nan:
+                raise ValueError("One of the simulation runs did not produce a valid result (NaN). Cannot generate report.")
             else:
                 scalar = self.vision_engine.rgb_to_scalar(np.array(res), cmap['name'], cmap['min'], cmap['max'])
                 scalars.append(scalar)
+                print(f"Converted result {res} to scalar {scalar} using colormap {cmap['name']} with min {cmap['min']} and max {cmap['max']}")
 
         gradients = []
         points = []
@@ -425,12 +422,9 @@ class MainApp:
             res_neg = scalars[2*i]
             res_pos = scalars[2*i + 1]
 
-            if np.isnan(res_neg) or np.isnan(res_pos):
-                print(f"Warning: NaN result for parameter {name} at point {point} with step {step}. Setting gradient to 0.")
-                grad = 0.0
-            else:
-                grad = (res_pos - res_neg) / (2 * step)
+            grad = (res_pos - res_neg) / (2 * step)
             gradients.append(grad)
+            print(f"Parameter '{name}': step={step}, point={point}, res_neg={res_neg}, res_pos={res_pos}, gradient={grad}")
         
         info_frame = tk.Frame(report_win, bg="white")
         info_frame.pack(fill=tk.X, padx=10, pady=10)
@@ -438,11 +432,52 @@ class MainApp:
         tk.Label(info_frame, text=", ".join(points), bg="white").pack(anchor=tk.W)
         tk.Label(info_frame, text=f"Colormap: {cmap['name']} (Min: {cmap['min']}, Max: {cmap['max']})", bg="white").pack(anchor=tk.W)
         
-        fig, ax = plt.subplots(figsize=(6, 4))
-        ax.bar(param_names, gradients, color='skyblue')
-        ax.set_ylabel("Gradient")
-        ax.set_title("Gradient")
-        plt.xticks(rotation=45, ha="right")
+        # Plot gradient as a barplot
+        fig_height = len(param_names) * 0.9
+        fig, ax = plt.subplots(figsize=(6, fig_height))
+
+        bars = ax.barh(
+            param_names,
+            gradients,
+            color='skyblue',
+            height=0.8
+        )
+
+        ax.set_xlabel("Partial Derivative")
+        ax.set_title('Gradient Barplot')
+
+        # Add padding so labels fit inside frame
+        max_abs = max(abs(g) for g in gradients)
+        padding = max_abs * 0.5
+
+        ax.set_xlim(
+            -max_abs - padding,
+            max_abs + padding
+        )
+
+        # Value labels
+        for bar, grad in zip(bars, gradients):
+            y = bar.get_y() + bar.get_height() / 2
+
+            if grad >= 0:
+                ax.text(
+                    grad + padding * 0.05,
+                    y,
+                    f"{grad:.4f}",
+                    va='center',
+                    ha='left',
+                    fontsize=9
+                )
+            else:
+                ax.text(
+                    grad - padding * 0.05,
+                    y,
+                    f"{grad:.4f}",
+                    va='center',
+                    ha='right',
+                    fontsize=9
+                )
+
         fig.tight_layout()
         
         canvas = FigureCanvasTkAgg(fig, master=report_win)
@@ -926,7 +961,7 @@ class MainApp:
                     point_var = tk.StringVar(value=str(default_point))
                     tk.Entry(row_frame, textvariable=point_var, width=12, bg="white").pack(side=tk.LEFT, padx=2, pady=2)
                     
-                    default_step = saved_grad_params.get(param_name, {}).get('step', 0.01)
+                    default_step = saved_grad_params.get(param_name, {}).get('step', 0.1)
                     step_var = tk.StringVar(value=str(default_step))
                     tk.Entry(row_frame, textvariable=step_var, width=12, bg="white").pack(side=tk.LEFT, padx=2, pady=2)
                     
@@ -984,7 +1019,13 @@ class MainApp:
                             messagebox.showerror("Error", f"Step size for {param_name} must be > 0")
                             return
                         gradient_params[param_name] = {"point": point, "step": step}
-                    samples = self.generate_gradient_samples(problem, gradient_params)
+
+                    try:
+                        samples = self.generate_gradient_samples(problem, gradient_params)
+                    except ValueError as e:
+                        messagebox.showerror("Error", str(e))
+                        return
+                    
                     self.project.metadata['sa_params'] = gradient_params
                 else:
                     messagebox.showerror("Error", "Gradient parameters not found")
@@ -1001,45 +1042,31 @@ class MainApp:
             messagebox.showerror("Error", f"Error generating samples: {str(e)}")
 
     def generate_gradient_samples(self, problem, gradient_params):
-        n_vars = problem['num_vars']
         samples = []
         param_names = problem['names']
         bounds = problem['bounds']
-        
+        central_points = [gradient_params.get(name).get('point') for name in param_names]
+
         for i, name in enumerate(param_names):
-            gp = gradient_params.get(name, {})
-            step = abs(gp.get('step', 0.0))
-            if step <= 0: step = (bounds[i][1] - bounds[i][0]) * 0.1
-            
-            central = []
-            for j, pname in enumerate(param_names):
-                if j == i: central.append(gp.get('point', (bounds[j][0] + bounds[j][1]) / 2))
-                else: central.append(gradient_params.get(pname, {}).get('point', (bounds[j][0] + bounds[j][1]) / 2))
-            
-            sample_neg = central.copy()
-            sample_neg[i] = max(bounds[i][0], min(bounds[i][1], sample_neg[i] - step))
+            sample_neg = central_points.copy()
+            sample_pos = central_points.copy()
+            sample_neg[i] = sample_neg[i] - gradient_params.get(name).get('step')
+            sample_pos[i] = sample_pos[i] + gradient_params.get(name).get('step')
+            if sample_neg[i] < bounds[i][0] or sample_pos[i] > bounds[i][1]:
+                raise ValueError(f"Sample points for parameter '{name}' are out of bounds: [{sample_neg[i]}, {sample_pos[i]}]. Please adjust the central point or step size.")
             samples.append(sample_neg)
-            
-            sample_pos = central.copy()
-            sample_pos[i] = max(bounds[i][0], min(bounds[i][1], sample_pos[i] + step))
             samples.append(sample_pos)
-        
+
         return np.array(samples)
 
     def cleanup_partial_roi_files(self):
-        roi_dir = os.path.join(self.project.folder_path, "ROIs")
-        if os.path.exists(roi_dir):
-            for f in os.listdir(roi_dir):
-                if f.startswith(f"roi_main_{self.current_sample_index}.png"):
-                    try: os.remove(os.path.join(roi_dir, f))
-                    except OSError: pass
+        current_roi_path = os.path.join(self.project.folder_path, "ROIs", f"roi_main_{self.current_sample_index}.png")
+        if os.path.exists(current_roi_path):
+            os.remove(current_roi_path)
         
-        add_roi_dir = os.path.join(self.project.folder_path, "Additional ROIs")
-        if os.path.exists(add_roi_dir):
-            for f in os.listdir(add_roi_dir):
-                if f.startswith(f"roi_additional_{self.current_sample_index}.png"):
-                    try: os.remove(os.path.join(add_roi_dir, f))
-                    except OSError: pass
+        current_additional_roi_path = os.path.join(self.project.folder_path, "Additional ROIs", f"roi_additional_{self.current_sample_index}.png")
+        if os.path.exists(current_additional_roi_path):
+            os.remove(current_additional_roi_path)
 
     def start_running(self):
         if 'main_roi' not in self.project.metadata:
@@ -1070,7 +1097,7 @@ class MainApp:
             return
         
         self.project.metadata['status'] = "in_progress"
-        self.project.results = [None] * len(self.project.samples)
+        self.project.results = [[np.nan, np.nan, np.nan]] * len(self.project.samples)
         self.project.save()
 
         self.root.iconify()
@@ -1102,10 +1129,11 @@ class MainApp:
                 self.current_sample_index = i
                 
                 res_val = self.project.results[i]
-                if res_val is not None:
-                    if isinstance(res_val, list) and len(res_val) == 3 and not np.isnan(res_val[0]):
-                        i += 1
-                        continue
+
+                # Skip replay if result already exists
+                if res_val[0] is not np.nan:
+                    i += 1
+                    continue
                 
                 self.cleanup_partial_roi_files()
                 
@@ -1122,21 +1150,22 @@ class MainApp:
                     self.root.after(0, lambda: self._show_timeout_error(str(e)))
                     continue  # Do not advance index! Retry it after user resumes.
                 
-                # Evaluation of result
-                roi_dir = os.path.join(self.project.folder_path, "ROIs")
-                roi_path = os.path.join(roi_dir, f"roi_main_{i}.png")
+                # Compute average RGB for main ROI
+                roi_path = os.path.join(self.project.folder_path, "ROIs", f"roi_main_{i}.png")
                 
                 avg_rgb = None
                 if os.path.exists(roi_path):
                     img = cv2.imread(roi_path)
                     if img is not None:
                         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                        avg_rgb = rgb.mean(axis=0).mean(axis=0)
-                
-                if avg_rgb is not None:
-                    self.project.results[i] = avg_rgb.tolist()
+                        rgb = np.array(rgb).astype('float64')
+                        avg_rgb = rgb.mean(axis=(0, 1))
+                    else:
+                        raise ValueError(f"Failed to read ROI image for sample {i} at: {roi_path}")
                 else:
-                    self.project.results[i] = [np.nan, np.nan, np.nan]
+                    raise FileNotFoundError(f"Expected ROI screenshot not found for sample {i}. Expected at: {roi_path}")
+                
+                self.project.results[i] = avg_rgb.tolist()
 
                 self.project.save()
                 i += 1

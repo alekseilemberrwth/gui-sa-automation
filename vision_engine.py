@@ -1,7 +1,7 @@
 import mss
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
+import matplotlib as mpl
 import os
 import time
 
@@ -65,10 +65,10 @@ class VisionEngine:
         bbox = {'left': x1, 'top': y1, 'width': x2 - x1, 'height': y2 - y1}
         screenshot = self.sct.grab(bbox)
         img = np.array(screenshot)
-        rgb_img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
+        bgr_img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
         
         roi_path = os.path.join(roi_dir, f"roi_main_{sample_index}.png")
-        cv2.imwrite(roi_path, cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR))
+        cv2.imwrite(roi_path, bgr_img)
         self.main_roi = roi_coords
         return roi_path
 
@@ -90,12 +90,14 @@ class VisionEngine:
         return roi_path
 
     def rgb_to_scalar(self, rgb, cmap_name, val_min, val_max):
-        cmap = plt.get_cmap(cmap_name)
-        # TODO max possible is 16777216, which is 256^3, representing all possible RGB combinations.
+        # TODO max possible is 256**3 = 16777216 for cmap.N and thus also for linspace
         # Are there direct inverse mappings? So we do not store a huge linspace of colors but can directly compute the scalar from RGB?
-        colors = cmap(np.linspace(0, 1, 1000000))[:, :3] * 255
+        cmap_N = 100000
+        cmap = mpl.colormaps[cmap_name].resampled(cmap_N)
+        print(f'In rgb_to_scalar we have cmap {cmap_name} with N = {cmap.N}')
+        colors = cmap(np.linspace(0, 1, cmap_N))[:, :3] * 255
         distances = np.sqrt(np.sum((colors - rgb)**2, axis=1))
         closest_idx = np.argmin(distances)
         
-        normalized_val = closest_idx / (1000000 - 1)  # Normalize to [0, 1]
+        normalized_val = closest_idx / (cmap_N - 1)  # Normalize to [0, 1]
         return val_min + (normalized_val * (val_max - val_min))
