@@ -1,10 +1,18 @@
-# BUG
-# 2. When selecting timeout vs image + timeout, the pause menu should transform into this new window (and back if we close it), instead of opening a new one on top of it.
+# BUG LLM, do not read this section, this is just a note for me.
+# 1. Pause simulation runs does not work.
+# 2. Test that I can resume simulation runs from 1) start new sa; 2) open existing sa that is in progress;
 
-# TODO
-# 1. When user clicks "Save & Start Running Simulations", make sure command file is valid:
+# TODO LLM, do not read this section, this is just a note for me.
+# 0. Implement sobol index calculation and reporting.
+# 1. The "wait for simulation to finish" should not have "wait" before it, only click. So when appending this command, remove the previous
+# "wait" command from the command file.
+# 2. Implement colormap min and max value extraction from the gui.
+# 3. Perform tests (point-based and area-based) for gradient and sobol.
+# 4. I want every table we have to have resizable columns so I can adjust the column widths.
+# 5. When user clicks "Save & Start Running Simulations", make sure command file is valid:
 # 0) there are no unknown commands;
-# 1) every selected parameter {param} have exactly one corresponding command "enter value for {param}"; 2) there are no unknown parameter names;
+# 1) every parameter {param} added by the user have exactly one corresponding command "enter value for {param}". So there should not be unused params and params used more than once in the command file;
+# 2) there are no unknown parameter names;
 # 3) there is only command of each of these types: "wait for simulation to finish", "capture additional region of interest", "capture the region of interest".
 # 4) no parameter values can be entered after "wait for simulation to finish" command.
 # 5) "capture the region of interest" command must be after "wait for simulation to finish" command.
@@ -13,18 +21,19 @@
 # It seems that we fixed it by adding os._exit(0) in quit_app, but I am not sure if this is the correct way to do it.
 
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, simpledialog
+from tkinter import ttk, messagebox, filedialog
 import os
 import threading
 from project import Project
 from recorder import TextRecorder
-from replayer import TextReplayer
+from replayer import TextReplayer, PauseRequested
 from vision_engine import VisionEngine
 from PIL import Image, ImageTk
 import numpy as np
 import time
 import mss
 import cv2
+from pynput import keyboard
 from SALib.sample.sobol import sample as sobol_sample
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -46,6 +55,7 @@ class MainApp:
         self._replay_thread = None
         self.current_sample_index = 0
         self.in_roi_preview = False
+        self.replay_keyboard_listener = None
         
         self.root.protocol("WM_DELETE_WINDOW", self.on_window_close)
         self.setup_main_menu()
@@ -84,6 +94,9 @@ class MainApp:
             self.show_recording_menu()
             return
         
+        self.go_back()
+    
+    def go_back(self):
         if len(self.screen_stack) > 0:
             self.screen_stack.pop()
             if len(self.screen_stack) > 0:
@@ -114,6 +127,10 @@ class MainApp:
             self.edit_param_ui()
         elif screen_name == "sa_setup":
             self.sa_setup_ui()
+        elif screen_name == "capture_completion_choice":
+            self.show_completion_indicator_choice()
+        elif screen_name == "timeout_only_input":
+            self.show_timeout_only_input()
 
     def setup_main_menu(self):
         for widget in self.root.winfo_children(): widget.destroy()
@@ -226,10 +243,7 @@ class MainApp:
                                      values=['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'rainbow'],
                                      state='readonly', width=15)
         cmap_dropdown.pack(side=tk.LEFT, padx=5)
-        cmap_source = self.project.metadata['colormap']['source']
-        tk.Label(cmap_name_frame, text=f"({cmap_source})", bg="white").pack(side=tk.LEFT)
-        tk.Button(cmap_name_frame, text="Identify from data", bg="white", command=self.identify_colormap_from_data).pack(side=tk.LEFT, padx=5)
-        
+
         def on_cmap_change(*args):
             changes_made["changed"] = True
             update_save_button()
@@ -315,9 +329,10 @@ class MainApp:
 
     def resume_sims(self):
         if messagebox.askokcancel("Confirm", "Resume simulation running?"):
-            self.root.iconify()
-            self.replay_paused = False
+            self.root.iconify()  # Hide window, will appear if Esc is pressed
+            self.replay_paused = False  # Start running immediately
             self.replay_stop_requested = False
+            self._start_replay_keyboard_listener()
             self._replay_thread = threading.Thread(target=self.start_replay, daemon=True)
             self._replay_thread.start()
 
@@ -347,42 +362,79 @@ class MainApp:
         os.startfile(latest)
 
     def capture_completion_indicator(self):
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Simulation Completion Method")
-        
-        # Center this dialog
-        dialog.geometry("300x150")
-        dialog.transient(self.root)
-        dialog.grab_set()
+        self.push_screen("capture_completion_choice")
+        self.show_completion_indicator_choice()
 
-        tk.Label(dialog, text="Select completion detection method:").pack(pady=20)
+    def show_completion_indicator_choice(self):
+        for widget in self.root.winfo_children(): widget.destroy()
         
+        self.root.title(f"Set Simulation Completion Indicator | {self.project.metadata['name']}")
+        self.center_window(400, 125)
+        self.root.config(bg="white")
+        
+        main_frame = tk.Frame(self.root, bg="white")
+        main_frame.pack(fill=tk.BOTH, expand=True, pady=20, padx=20)
+            
         def on_timeout():
-            dialog.destroy()
-            self.prompt_timeout_only()
+            if len(self.screen_stack) > 0: self.screen_stack.pop()
+            self.push_screen("timeout_only_input")
+            self.show_timeout_only_input()
             
         def on_image_timeout():
-            dialog.destroy()
+            if len(self.screen_stack) > 0: self.screen_stack.pop()
             self.start_roi_selection("completion_indicator")
             
-        btn_frame = tk.Frame(dialog)
-        btn_frame.pack(pady=10)
-        tk.Button(btn_frame, text="Timeout Only", command=on_timeout).pack(side=tk.LEFT, padx=10)
-        tk.Button(btn_frame, text="Image + Timeout", command=on_image_timeout).pack(side=tk.LEFT, padx=10)
-
-    def prompt_timeout_only(self):
-        timeout = simpledialog.askfloat("Timeout", "Enter timeout in seconds:", minvalue=0.1, parent=self.root)
-        if timeout:
-            cmd = f"wait for simulation to finish with timeout {timeout}"
-            self._add_unique_command(cmd, prefix="wait for simulation to finish")
-            # Delete any old completion templates since we are using pure timeout
-            for f in os.listdir(self.project.folder_path):
-                if f.startswith("simulation_completion_indicator"):
-                    os.remove(os.path.join(self.project.folder_path, f))
-            messagebox.showinfo("Success", f"Timeout set to {timeout} seconds.")
-
-    def identify_colormap_from_data(self):
-        messagebox.showinfo("Info", "Colormap identification from data not yet implemented")
+        btn_frame = tk.Frame(main_frame, bg="white")
+        btn_frame.pack(pady=20)
+        tk.Button(btn_frame, text="Timeout Only", command=on_timeout, bg="white", width=15).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="Image + Timeout", command=on_image_timeout, bg="white", width=15).pack(side=tk.LEFT, padx=10)
+        
+        tk.Button(main_frame, text="Back", command=lambda: self.go_back(), bg="white").pack(side=tk.BOTTOM, pady=10)
+    
+    def show_timeout_only_input(self):
+        for widget in self.root.winfo_children(): widget.destroy()
+        
+        self.root.title(f"Timeout Configuration | {self.project.metadata['name']}")
+        self.center_window(400, 200)
+        self.root.config(bg="white")
+        
+        main_frame = tk.Frame(self.root, bg="white")
+        main_frame.pack(fill=tk.BOTH, expand=True, pady=20, padx=20)
+        
+        tk.Label(main_frame, text="Enter timeout in seconds:", font=("Arial", 11), bg="white").pack(pady=10)
+        
+        timeout_var = tk.StringVar(value="10.0")
+        timeout_entry = tk.Entry(main_frame, textvariable=timeout_var, font=("Arial", 12), bg="white")
+        timeout_entry.pack(pady=10, fill=tk.X)
+        timeout_entry.focus()
+        
+        def on_confirm():
+            try:
+                timeout = float(timeout_var.get())
+                if timeout <= 0:
+                    messagebox.showerror("Error", "Timeout must be a positive number")
+                    return
+                cmd = f"wait for simulation to finish with timeout {timeout}"
+                self._add_unique_command(cmd, prefix="wait for simulation to finish")
+                # Delete any old completion templates since we are using pure timeout
+                for f in os.listdir(self.project.folder_path):
+                    if f.startswith("simulation_completion_indicator"):
+                        os.remove(os.path.join(self.project.folder_path, f))
+                if len(self.screen_stack) > 0: self.screen_stack.pop()
+                self.show_recording_menu()
+            except ValueError:
+                messagebox.showerror("Error", "Please enter a valid number")
+        
+        def on_back():
+            if len(self.screen_stack) > 0: self.screen_stack.pop()
+            self.show_completion_indicator_choice()
+        
+        button_frame = tk.Frame(main_frame, bg="white")
+        button_frame.pack(side=tk.BOTTOM, pady=10)
+        tk.Button(button_frame, text="Confirm", command=on_confirm, bg="white").pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Back", command=on_back, bg="white").pack(side=tk.LEFT, padx=5)
+        
+        timeout_entry.bind("<Return>", lambda e: on_confirm())
 
     def generate_report(self):
         sa_type = self.project.metadata.get('sa_type')
@@ -399,7 +451,7 @@ class MainApp:
 
         report_win = tk.Toplevel(self.root)
         report_win.title("Gradient-Based SA Results")
-        report_win.geometry(f"600x{len(param_names)*100}")
+        report_win.geometry(f"600x{max(len(param_names)*100, 500)}")
         
         # Convert results to scalars using the colormap inversion
         scalars = []
@@ -409,7 +461,7 @@ class MainApp:
             else:
                 scalar = self.vision_engine.rgb_to_scalar(np.array(res), cmap['name'], cmap['min'], cmap['max'])
                 scalars.append(scalar)
-                print(f"Converted result {res} to scalar {scalar} using colormap {cmap['name']} with min {cmap['min']} and max {cmap['max']}")
+                # print(f"Converted result {res} to scalar {scalar} using colormap {cmap['name']} with min {cmap['min']} and max {cmap['max']}")
 
         gradients = []
         points = []
@@ -424,7 +476,7 @@ class MainApp:
 
             grad = (res_pos - res_neg) / (2 * step)
             gradients.append(grad)
-            print(f"Parameter '{name}': step={step}, point={point}, res_neg={res_neg}, res_pos={res_pos}, gradient={grad}")
+            # print(f"Parameter '{name}': step={step}, point={point}, res_neg={res_neg}, res_pos={res_pos}, gradient={grad}")
         
         info_frame = tk.Frame(report_win, bg="white")
         info_frame.pack(fill=tk.X, padx=10, pady=10)
@@ -584,11 +636,26 @@ class MainApp:
         self.root.lift()
         self.show_replay_pause_menu()
 
+    def _on_replay_key_press(self, key):
+        if key == keyboard.Key.esc and not self.replay_paused and not self.replay_stop_requested:
+            self.root.after(0, self.pause_replay)
+
+    def _start_replay_keyboard_listener(self):
+        self._stop_replay_keyboard_listener()
+        self.replay_keyboard_listener = keyboard.Listener(on_press=self._on_replay_key_press)
+        self.replay_keyboard_listener.daemon = True
+        self.replay_keyboard_listener.start()
+
+    def _stop_replay_keyboard_listener(self):
+        if self.replay_keyboard_listener:
+            self.replay_keyboard_listener.stop()
+            self.replay_keyboard_listener = None
+
     def show_replay_pause_menu(self):
         for widget in self.root.winfo_children(): widget.destroy()
         
         self.root.title(f"Replay Paused | {self.project.metadata['name']}")
-        self.center_window(500, 400)
+        self.center_window(500, 200)
         self.root.config(bg="white")
         
         main_frame = tk.Frame(self.root, bg="white")
@@ -597,10 +664,10 @@ class MainApp:
         tk.Label(main_frame, text=f"Replay paused at sample {self.current_sample_index + 1} of {len(self.project.samples)}", 
                 bg="white", font=("Arial", 12)).pack(pady=20)
         
-        tk.Button(main_frame, text="Start running simulations", bg="green", fg="white", 
+        tk.Button(main_frame, text="Resume running simulations", bg="green", fg="white", 
                   command=self.resume_replay).pack(fill=tk.X, padx=20, pady=10)
         
-        tk.Button(main_frame, text="Stop and Return to Main Menu", bg="red", fg="white", 
+        tk.Button(main_frame, text="Stop and return to main menu", bg="red", fg="white", 
                   command=self.stop_replay).pack(fill=tk.X, padx=20, pady=10)
 
     def resume_replay(self):
@@ -610,6 +677,7 @@ class MainApp:
     def stop_replay(self):
         self.replay_stop_requested = True
         self.replay_paused = False
+        self._stop_replay_keyboard_listener()
         self.setup_main_menu()
 
     def view_cmd_file(self):
@@ -1100,9 +1168,10 @@ class MainApp:
         self.project.results = [[np.nan, np.nan, np.nan]] * len(self.project.samples)
         self.project.save()
 
-        self.root.iconify()
-        self.replay_paused = False
+        self.root.iconify()  # Hide window, will appear if Esc is pressed
+        self.replay_paused = False  # Start running immediately
         self.replay_stop_requested = False
+        self._start_replay_keyboard_listener()
         self._replay_thread = threading.Thread(target=self.start_replay, daemon=True)
         self._replay_thread.start()
 
@@ -1143,11 +1212,16 @@ class MainApp:
 
                 param_dict = {param_names[j]: self.project.samples[i][j] for j in range(len(param_names))}
                 try:
-                    replayer.execute_run(cmd_file, param_dict, self.vision_engine, template_path, self.project, i)
+                    replayer.execute_run(cmd_file, param_dict, self.vision_engine, template_path, self.project, i, should_pause_fn=lambda: self.replay_paused)
                 except TimeoutError as e:
                     self.cleanup_partial_roi_files()
                     self.replay_paused = True
                     self.root.after(0, lambda: self._show_timeout_error(str(e)))
+                    continue  # Do not advance index! Retry it after user resumes.
+                except PauseRequested:
+                    self.cleanup_partial_roi_files()
+                    self.replay_paused = True
+                    self.root.after(0, self._show_replay_paused_ui)
                     continue  # Do not advance index! Retry it after user resumes.
                 
                 # Compute average RGB for main ROI
@@ -1178,6 +1252,8 @@ class MainApp:
             err_msg = str(e)
             self.root.after(0, lambda: messagebox.showerror("Error", f"Replay failed: {err_msg}"))
             self.root.after(0, self.root.deiconify)
+        finally:
+            self._stop_replay_keyboard_listener()
 
     def _on_replay_finished(self):
         self.root.deiconify()

@@ -38,7 +38,7 @@ class VisionEngine:
         # print(f"Completion check - MAD: {mad:.4f}, Threshold: {threshold}")
         return mad <= threshold
 
-    def wait_for_completion(self, template_path, roi_coords, max_wait=10.0, check_interval=1.0):
+    def wait_for_completion(self, template_path, roi_coords, max_wait=10.0, check_interval=1.0, should_pause_fn=None):
         if not self.project_path or not template_path or not os.path.exists(template_path):
             # print("Project path or template path not set or template file does not exist. Falling back to fixed wait.")
             # print(f"self.project_path: {self.project_path}, template_path: {template_path}")
@@ -47,6 +47,8 @@ class VisionEngine:
         
         start_time = time.time()
         while time.time() - start_time < max_wait:
+            if should_pause_fn and should_pause_fn():
+                return False
             try:
                 if self.is_completed(template_path, roi_coords):
                     return True
@@ -90,14 +92,10 @@ class VisionEngine:
         return roi_path
 
     def rgb_to_scalar(self, rgb, cmap_name, val_min, val_max):
-        # TODO max possible is 256**3 = 16777216 for cmap.N and thus also for linspace
-        # Are there direct inverse mappings? So we do not store a huge linspace of colors but can directly compute the scalar from RGB?
-        cmap_N = 100000
-        cmap = mpl.colormaps[cmap_name].resampled(cmap_N)
-        print(f'In rgb_to_scalar we have cmap {cmap_name} with N = {cmap.N}')
-        colors = cmap(np.linspace(0, 1, cmap_N))[:, :3] * 255
+        cmap = mpl.colormaps[cmap_name]
+        colors = np.array(cmap.colors) * 255
         distances = np.sqrt(np.sum((colors - rgb)**2, axis=1))
         closest_idx = np.argmin(distances)
         
-        normalized_val = closest_idx / (cmap_N - 1)  # Normalize to [0, 1]
+        normalized_val = closest_idx / (cmap.N - 1)  # Normalize to [0, 1]
         return val_min + (normalized_val * (val_max - val_min))

@@ -11,7 +11,7 @@ class Project:
             "params": {}, # {name: {"min": 0, "max": 1}}
             "sa_type": None,
             "sa_params": {},
-            "colormap": {"name": "viridis", "source": "chosen by user", "min": 0.0, "max": 100.0},
+            "colormap": {"name": "viridis", "min": 0.0, "max": 100.0},
             "additional_roi_status": "not capturing",
             "n_required": 0,
             # "main_roi": None,

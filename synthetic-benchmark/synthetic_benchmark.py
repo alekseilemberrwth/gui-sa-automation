@@ -33,13 +33,12 @@ class BenchmarkApp:
             'a_max': 9,
             'b_min': -0.4,
             'b_max': 0.6,
-            'a_bins': 1000,
-            'b_bins': 1000,
+            'a_bins': 1670, # 1670x1009 is the size in pixels of the plot area on my pc
+            'b_bins': 1009,
             'colorbar_min': '',
             'colorbar_max': '',
             'sim_time_min': 0.0,
             'sim_time_max': 4.0,
-            'cmap_N': 100000, # TODO make editable?
         }
         self.current = self.defaults.copy()
         
@@ -159,7 +158,7 @@ class BenchmarkApp:
 
         self.progress_frame = tk.Frame(left_frame, bg="white")
         self.progress_bar = ttk.Progressbar(self.progress_frame, orient="horizontal", mode="determinate", maximum=100)
-        self.progress_bar.pack(side=tk.LEFT, expand=True, fill=tk.X)
+        self.progress_bar.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(10, 0))
         self.progress_percent_label = tk.Label(self.progress_frame, text="0%", width=4, anchor='e', bg="white")
         self.progress_percent_label.pack(side=tk.RIGHT, padx=(5, 0))
         self.progress_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(5, 0))
@@ -275,6 +274,16 @@ class BenchmarkApp:
     def draw_data(self, vmin=None, vmax=None):
         if self.Z is None:
             return
+        # Ensure the Matplotlib figure matches the Tk canvas pixel size
+        canvas_widget = self.canvas.get_tk_widget()
+        canvas_width = canvas_widget.winfo_width()
+        canvas_height = canvas_widget.winfo_height()
+        if canvas_width > 1 and canvas_height > 1:
+            width_inches = canvas_width / self.fig.dpi
+            height_inches = canvas_height / self.fig.dpi
+            self.fig.set_size_inches(width_inches, height_inches)
+            # print(f"Resizing figure to {width_inches:.2f}x{height_inches:.2f} inches for canvas size {canvas_width}x{canvas_height} pixels")
+            self.fig.tight_layout()
         if vmin is None:
             try:
                 vmin = float(self.current['colorbar_min'])
@@ -287,18 +296,18 @@ class BenchmarkApp:
                 vmax = self.Z.max()
         self.ax.clear()
         self.ax.set_facecolor('white')
-        # print(f'Synthetic benchmark uses cmap {self.current['colormap']} with N = {mpl.colormaps[self.current['colormap']].resampled(self.current['cmap_N']).N}')
-        c = self.ax.imshow(self.Z, extent=[self.current['a_min'], self.current['a_max'], self.current['b_min'], self.current['b_max']], origin='lower',
-                           cmap=mpl.colormaps[self.current['colormap']].resampled(self.current['cmap_N']), #self.current['colormap'],
-                           vmin=vmin, vmax=vmax)
+        c = self.ax.imshow(self.Z, extent=[self.current['a_min'], self.current['a_max'], self.current['b_min'], self.current['b_max']], origin='lower', cmap=self.current['colormap'], vmin=vmin, vmax=vmax)
         if not hasattr(self, 'cbar'):
             self.cbar = self.fig.colorbar(c, ax=self.ax)
         else:
             self.cbar.update_normal(c)
         self.ax.set_xlabel('Parameter a')
         self.ax.set_ylabel('Parameter b')
-        self.ax.set_aspect((self.current['a_max'] - self.current['a_min']) / (self.current['b_max'] - self.current['b_min']))  # Make plot square
+        # Let the axes fill the canvas shape instead of forcing a square
+        self.ax.set_aspect('auto')
         self.canvas.draw()
+        
+        # plt.show()
 
     def update_current_from_inputs(self, include_sim_time=False):
         self.current['x1'] = float(self.vars['x1'].get())
