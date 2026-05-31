@@ -1,14 +1,12 @@
 # BUG LLM, do not read this section, this is just a note for me.
+1. 
 
 # TODO LLM, do not read this section, this is just a note for me.
-# 1. The "wait for simulation to finish" command should not have a "wait" command before it. So before appending "wait for simulation to finish" 
-# command, remove all the trailing "wait" commands from the command file. By trailing I mean, starting from the end of the file, while command = wait: 
-# remove and take the next command above, otherwise stop and append the "wait for simulation to finish" command.
-# 2. I want every table we have to have resizable columns so I can adjust the column widths. If it is not possible to make the columns resizable,
+# 1. I want every table we have to have resizable columns so I can adjust the column widths. If it is not possible to make the columns resizable,
 # every table should be rendered taking into account the max width of the content in each column.
 # 2. Implement colormap min and max value extraction from the gui.
-# 0. Implement sobol index calculation and reporting.
-# 3. Perform tests (point-based and area-based) for gradient and sobol.
+# 3. Implement sobol index calculation and reporting.
+# 4. Perform tests (point-based and area-based) for gradient and sobol.
 # 5. When user clicks "Save & Start Running Simulations", make sure command file is valid:
 # 0) there are no unknown commands;
 # 1) every parameter {param} added by the user have exactly one corresponding command "enter value for {param}". So there should not be unused params and params used more than once in the command file;
@@ -18,9 +16,9 @@
 # 5) no parameter values can be entered after "wait for simulation to finish" command.
 # 6) "capture the region of interest" command must be after "wait for simulation to finish" command.
 # 7) anything else what I forgot?
-# 3. Review the window stack management and app closing. There was an issue with the app not closing properly after viewing results and closing all windows.
+# 6. Review the window stack management and app closing. There was an issue with the app not closing properly after viewing results and closing all windows.
 # It seems that we fixed it by adding os._exit(0) in quit_app, but I am not sure if this is the correct way to do it.
-# 6. Perform a thorough GUI enhancement.
+# 7. Perform a thorough GUI enhancement.
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -82,10 +80,14 @@ class MainApp:
             lines = f.readlines()
         
         with open(cmd_file, "w") as f:
-            for line in lines:
+            for i in range(len(lines)):
+                line = lines[i]
                 if prefix and line.strip().startswith(prefix):
                     continue
                 if not prefix and line.strip() == cmd:
+                    continue
+                # Remove last "wait" command, because we have a custom waiting logic (simulation completion indicator)
+                if i == len(lines) - 1 and cmd.startswith("wait for simulation to finish") and line.startswith("wait "):
                     continue
                 f.write(line)
             f.write(cmd + "\n")
