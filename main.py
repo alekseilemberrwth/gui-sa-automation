@@ -1,13 +1,12 @@
 # BUG LLM, do not read this section, this is just a note for me.
-1. 
+# -
 
 # TODO LLM, do not read this section, this is just a note for me.
-# 1. I want every table we have to have resizable columns so I can adjust the column widths. If it is not possible to make the columns resizable,
-# every table should be rendered taking into account the max width of the content in each column.
-# 2. Implement colormap min and max value extraction from the gui.
-# 3. Implement sobol index calculation and reporting.
-# 4. Perform tests (point-based and area-based) for gradient and sobol.
-# 5. When user clicks "Save & Start Running Simulations", make sure command file is valid:
+# - Try to enhance colormap inversion. Now it is simple argmin Euclidean distance, but maybe we can do something more advanced.
+# - Implement sobol index calculation and reporting.
+# - Implement additional stats over the average pixels from many simulation runs like mean, median, std, etc. and include them in the report.
+# - Perform tests (point-based and area-based) for gradient and sobol.
+# - When user clicks "Save & Start Running Simulations", make sure command file is valid:
 # 0) there are no unknown commands;
 # 1) every parameter {param} added by the user have exactly one corresponding command "enter value for {param}". So there should not be unused params and params used more than once in the command file;
 # 2) there are no unknown parameter names;
@@ -18,7 +17,9 @@
 # 7) anything else what I forgot?
 # 6. Review the window stack management and app closing. There was an issue with the app not closing properly after viewing results and closing all windows.
 # It seems that we fixed it by adding os._exit(0) in quit_app, but I am not sure if this is the correct way to do it.
-# 7. Perform a thorough GUI enhancement.
+# - I want every table we have in the app to have resizable-by-user (by dragging the column borders) columns so I can adjust the column widths. If it is not possible to make the columns
+# resizable, every table should be rendered taking into account the max width of the content in each column.
+# - Perform a thorough GUI enhancement.
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -252,30 +253,6 @@ class MainApp:
             changes_made["changed"] = True
             update_save_button()
         cmap_var.trace('w', on_cmap_change)
-        
-        min_frame = tk.Frame(cmap_info_frame, bg="white")
-        min_frame.pack(fill=tk.X, pady=2)
-        tk.Label(min_frame, text="Min value:", bg="white").pack(side=tk.LEFT)
-        min_var = tk.StringVar(value=str(self.project.metadata['colormap']['min']))
-        min_entry = tk.Entry(min_frame, textvariable=min_var, width=10, bg="white")
-        min_entry.pack(side=tk.LEFT, padx=5)
-        
-        def on_min_change(*args):
-            changes_made["changed"] = True
-            update_save_button()
-        min_var.trace('w', on_min_change)
-        
-        max_frame = tk.Frame(cmap_info_frame, bg="white")
-        max_frame.pack(fill=tk.X, pady=2)
-        tk.Label(max_frame, text="Max value:", bg="white").pack(side=tk.LEFT)
-        max_var = tk.StringVar(value=str(self.project.metadata['colormap']['max']))
-        max_entry = tk.Entry(max_frame, textvariable=max_var, width=10, bg="white")
-        max_entry.pack(side=tk.LEFT, padx=5)
-        
-        def on_max_change(*args):
-            changes_made["changed"] = True
-            update_save_button()
-        max_var.trace('w', on_max_change)
 
         if self.project.metadata['status'] == "Completed":
             tk.Button(main_frame, text="View SA results", bg="lightgreen", command=self.generate_report).pack(pady=20)
@@ -292,20 +269,11 @@ class MainApp:
             else: save_button.config(state=tk.DISABLED, bg="lightgrey", fg="grey")
         
         def on_save_clicked():
-            try:
-                cmap_min, cmap_max = float(min_var.get()), float(max_var.get())
-                if cmap_min >= cmap_max:
-                    messagebox.showerror("Error", "Min value must be less than Max value")
-                    return
-                self.project.metadata['colormap']['name'] = cmap_var.get()
-                self.project.metadata['colormap']['min'] = cmap_min
-                self.project.metadata['colormap']['max'] = cmap_max
-                self.project.save()
-                messagebox.showinfo("Success", "Changes saved successfully")
-                changes_made["changed"] = False
-                update_save_button()
-            except ValueError:
-                messagebox.showerror("Error", "Invalid values - Min and Max must be numbers")
+            self.project.metadata['colormap']['name'] = cmap_var.get()
+            self.project.save()
+            messagebox.showinfo("Success", "Changes saved successfully")
+            changes_made["changed"] = False
+            update_save_button()
         
         def on_back_clicked():
             if changes_made["changed"]:
@@ -364,6 +332,14 @@ class MainApp:
         full_paths = [os.path.join(self.project.folder_path, "Additional ROIs", f) for f in roi_files]
         latest = max(full_paths, key=os.path.getmtime)
         os.startfile(latest)
+
+    def capture_colormap_value(self, value_type):
+        if value_type not in ("min", "max"):
+            raise ValueError("Invalid value_type for capture_colormap_value. Must be 'min' or 'max'.")
+        cmd = f"capture colormap {value_type} value"
+        self._add_unique_command(cmd)
+        messagebox.showinfo("Info", f"Captured colormap {value_type} value")
+        self.show_recording_menu()
 
     def capture_completion_indicator(self):
         self.push_screen("capture_completion_choice")
@@ -460,12 +436,14 @@ class MainApp:
         # Convert results to scalars using the colormap inversion
         scalars = []
         for res in results:
-            if res[0] is np.nan:
+            if np.isnan(res).any():
                 raise ValueError("One of the simulation runs did not produce a valid result (NaN). Cannot generate report.")
-            else:
-                scalar = self.vision_engine.rgb_to_scalar(np.array(res), cmap['name'], cmap['min'], cmap['max'])
-                scalars.append(scalar)
-                # print(f"Converted result {res} to scalar {scalar} using colormap {cmap['name']} with min {cmap['min']} and max {cmap['max']}")
+            rgb = res[:3]
+            val_min, val_max = res[3], res[4]
+
+            scalar = self.vision_engine.rgb_to_scalar(rgb, cmap['name'], val_min, val_max)
+            scalars.append(scalar)
+            #print(f"Converted result {rgb} to scalar {scalar} using colormap {cmap['name']} with min {val_min} and max {val_max}")
 
         gradients = []
         points = []
@@ -480,14 +458,13 @@ class MainApp:
 
             grad = (res_pos - res_neg) / (2 * step)
             gradients.append(grad)
-            # print(f"Parameter '{name}': step={step}, point={point}, res_neg={res_neg}, res_pos={res_pos}, gradient={grad}")
+            #print(f"Parameter '{name}': step={step}, point={point}, res_neg={res_neg}, res_pos={res_pos}, gradient={grad}")
         
         info_frame = tk.Frame(report_win, bg="white")
         info_frame.pack(fill=tk.X, padx=10, pady=10)
         tk.Label(info_frame, text="Evaluation Point:", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W)
         tk.Label(info_frame, text=", ".join(points), bg="white").pack(anchor=tk.W)
-        tk.Label(info_frame, text=f"Colormap: {cmap['name']} (Min: {cmap['min']}, Max: {cmap['max']})", bg="white").pack(anchor=tk.W)
-        
+
         # Plot gradient as a barplot
         fig_height = len(param_names) * 0.9
         fig, ax = plt.subplots(figsize=(6, fig_height))
@@ -617,6 +594,8 @@ class MainApp:
         tk.Button(main_frame, text="Set simulation completion indicator", command=self.capture_completion_indicator, bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="Capture region of interest", command=lambda: self.start_roi_selection("main_roi"), bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="Capture additional region of interest", command=lambda: self.start_roi_selection("additional_roi"), bg="white").pack(fill=tk.X, padx=20, pady=5)
+        tk.Button(main_frame, text="Capture colormap min value", command=lambda: self.capture_colormap_value("min"), bg="white").pack(fill=tk.X, padx=20, pady=5)
+        tk.Button(main_frame, text="Capture colormap max value", command=lambda: self.capture_colormap_value("max"), bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="View command file", command=self.view_cmd_file, bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="Select SA type", command=self.sa_setup_ui, bg="white").pack(fill=tk.X, padx=20, pady=5)
         
@@ -1103,7 +1082,7 @@ class MainApp:
                     messagebox.showerror("Error", "Gradient parameters not found")
                     return
             
-            self.project.samples = samples.tolist() if hasattr(samples, 'tolist') else samples
+            self.project.samples = samples
             self.project.metadata['n_required'] = len(self.project.samples)
             self.project.metadata['sa_type'] = sa_type
             self.project.save()
@@ -1169,7 +1148,7 @@ class MainApp:
             return
         
         self.project.metadata['status'] = "In progress"
-        self.project.results = [[np.nan, np.nan, np.nan]] * len(self.project.samples)
+        self.project.results = np.array([[np.nan, np.nan, np.nan, np.nan, np.nan]] * len(self.project.samples))
         self.project.save()
 
         self.root.iconify()  # Hide window, will appear if Esc is pressed
@@ -1204,7 +1183,7 @@ class MainApp:
                 res_val = self.project.results[i]
 
                 # Skip replay if result already exists
-                if not np.isnan(res_val[0]):
+                if not np.isnan(res_val).any():
                     i += 1
                     continue
                 
@@ -1245,8 +1224,10 @@ class MainApp:
                         raise ValueError(f"Failed to read ROI image for sample {i} at: {roi_path}")
                 else:
                     raise FileNotFoundError(f"Expected ROI screenshot not found for sample {i}. Expected at: {roi_path}")
-                
-                self.project.results[i] = avg_rgb.tolist()
+
+                self.project.results[i][0:3] = avg_rgb
+
+                #print(f"start_replay: Project results [{i}] = {self.project.results[i]}")
 
                 self.project.save()
                 i += 1

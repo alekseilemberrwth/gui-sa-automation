@@ -1,4 +1,6 @@
 import time
+import numpy as np
+import pyperclip
 from pynput import mouse, keyboard
 
 class PauseRequested(Exception):
@@ -13,6 +15,18 @@ class TextReplayer:
     def __init__(self):
         self.m_ctrl = mouse.Controller()
         self.k_ctrl = keyboard.Controller()
+
+    def _copy_selection_to_clipboard(self):
+        self.k_ctrl.press(keyboard.Key.ctrl)
+        self.k_ctrl.press('a')
+        self.k_ctrl.release('a')
+        time.sleep(0.1)
+        self.k_ctrl.press('c')
+        self.k_ctrl.release('c')
+        self.k_ctrl.release(keyboard.Key.ctrl)
+        time.sleep(0.1)
+
+        #print(f"Copied selection to clipboard: {pyperclip.paste()}")
 
     def _check_pause(self, should_pause_fn):
         """Check if pause is requested and raise exception if so."""
@@ -30,6 +44,7 @@ class TextReplayer:
         self.k_ctrl.release('a')
         self.k_ctrl.release(keyboard.Key.ctrl)
         self.k_ctrl.press(keyboard.Key.backspace)
+        self.k_ctrl.release(keyboard.Key.backspace)
 
         val_str = str(val)
         for char in val_str:
@@ -44,9 +59,9 @@ class TextReplayer:
             except:
                 self.k_ctrl.press(char)
                 self.k_ctrl.release(char)
-            time.sleep(0.05)
+            # time.sleep(0.05)
 
-    def execute_run(self, cmd_file, param_dict, vision_engine, template_path=None, project=None, sample_index=0, should_pause_fn=None, should_stop_fn=None):
+    def execute_run(self, cmd_file, param_dict, vision_engine, template_path, project, sample_index, should_pause_fn, should_stop_fn):
         with open(cmd_file, "r") as f:
             lines = f.readlines()
 
@@ -57,20 +72,14 @@ class TextReplayer:
 
             if cmd.startswith("wait for simulation to finish with timeout"):
                 timeout = float(cmd.split("timeout ")[-1])
-                roi_coords = project.metadata.get('completion_roi')
-                success = vision_engine.wait_for_completion(template_path, roi_coords, max_wait=timeout, should_pause_fn=should_pause_fn, should_stop_fn=should_stop_fn)
+                completion_roi_coords = project.metadata.get('completion_roi')
+                success = vision_engine.wait_for_completion(template_path, completion_roi_coords, max_wait=timeout, should_pause_fn=should_pause_fn, should_stop_fn=should_stop_fn)
                 if not success:
                     raise TimeoutError(f"Simulation did not finish within {timeout} seconds.")
-                self._check_stop(should_stop_fn)
-                self._check_pause(should_pause_fn)
                 
             elif cmd.startswith("wait "):
-                try:
-                    delay = float(cmd.split()[1])
-                    time.sleep(delay)
-                except ValueError: pass
-                self._check_stop(should_stop_fn)
-                self._check_pause(should_pause_fn)
+                delay = float(cmd.split()[1])
+                time.sleep(delay)
 
             elif cmd.startswith("lmb click"):
                 coords_str = cmd.replace("lmb click at ", "").strip()
@@ -78,8 +87,6 @@ class TextReplayer:
                 x, y = int(coords[0]), int(coords[1])
                 self.m_ctrl.position = (x, y)
                 self.m_ctrl.click(mouse.Button.left)
-                self._check_stop(should_stop_fn)
-                self._check_pause(should_pause_fn)
 
             elif cmd.startswith("rmb click"):
                 coords_str = cmd.replace("rmb click at ", "").strip()
@@ -87,49 +94,51 @@ class TextReplayer:
                 x, y = int(coords[0]), int(coords[1])
                 self.m_ctrl.position = (x, y)
                 self.m_ctrl.click(mouse.Button.right)
-                self._check_stop(should_stop_fn)
-                self._check_pause(should_pause_fn)
 
             elif cmd.startswith("press key"):
                 key_str = cmd.replace("press key ", "").strip()
-                try:
-                    key = getattr(keyboard.Key, key_str, None)
-                    if key: self.k_ctrl.press(key)
-                    else: self.k_ctrl.press(key_str)
-                except: self.k_ctrl.press(key_str)
-                self._check_stop(should_stop_fn)
-                self._check_pause(should_pause_fn)
+                key = getattr(keyboard.Key, key_str, None)
+                if key: self.k_ctrl.press(key)
+                else: self.k_ctrl.press(key_str)
 
             elif cmd.startswith("release key"):
                 key_str = cmd.replace("release key ", "").strip()
-                try:
-                    key = getattr(keyboard.Key, key_str, None)
-                    if key: self.k_ctrl.release(key)
-                    else: self.k_ctrl.release(key_str)
-                except: self.k_ctrl.release(key_str)
-                self._check_stop(should_stop_fn)
-                self._check_pause(should_pause_fn)
+                key = getattr(keyboard.Key, key_str, None)
+                if key: self.k_ctrl.release(key)
+                else: self.k_ctrl.release(key_str)
 
             elif cmd.startswith("enter value for"):
                 param_name = cmd.replace("enter value for ", "").strip()
                 if param_name in param_dict:
                     self.inject_value(param_dict[param_name])
-                time.sleep(0.1)
-                self._check_stop(should_stop_fn)
-                self._check_pause(should_pause_fn)
+
+            elif cmd in ("capture colormap min value", "capture colormap max value"):
+                self._copy_selection_to_clipboard()
+                value_str = pyperclip.paste()
+                try:
+                    value = float(value_str)
+                except ValueError:
+                    raise ValueError(f"Invalid clipboard value for '{cmd}': {value_str}")
+
+                if cmd.endswith("min value"):
+                    project.results[sample_index][3] = value
+                else:
+                    project.results[sample_index][4] = value
+                
+                #print(f"execute_run: Captured colormap value for '{cmd}'")
+                #print(f"execute_run: Project results [{sample_index}] = {project.results[sample_index]}")
 
             elif cmd == "capture the region of interest":
                 if project and 'main_roi' in project.metadata:
                     coords = project.metadata['main_roi']
                     if coords:
                         vision_engine.extract_and_store_main_roi(coords, sample_index)
-                self._check_stop(should_stop_fn)
-                self._check_pause(should_pause_fn)
 
             elif cmd == "capture additional region of interest":
                 if project and 'additional_roi' in project.metadata:
                     coords = project.metadata['additional_roi']
                     if coords:
                         vision_engine.extract_and_store_additional_roi(coords, sample_index)
-                self._check_stop(should_stop_fn)
-                self._check_pause(should_pause_fn)
+
+            self._check_stop(should_stop_fn)
+            self._check_pause(should_pause_fn)

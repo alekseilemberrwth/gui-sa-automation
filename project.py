@@ -7,19 +7,17 @@ class Project:
         self.folder_path = folder_path
         self.metadata = {
             "name": "New Project",
-            "status": "setup", # setup, in_progress, completed
+            "status": "Setup", # setup, in progress, completed
             "params": {}, # {name: {"min": 0, "max": 1}}
             "sa_type": None,
             "sa_params": {},
-            "colormap": {"name": "viridis", "min": 0.0, "max": 100.0},
+            "colormap": {"name": "viridis"},
             "additional_roi_status": "not capturing",
             "n_required": 0,
-            # "main_roi": None,
-            # "additional_roi": None,
             "completion_roi": None
         }
-        self.results = []
-        self.samples = []
+        self.results = np.array([[]])
+        self.samples = np.array([[]])
 
     def save(self):
         if not self.folder_path: return

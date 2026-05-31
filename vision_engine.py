@@ -18,17 +18,17 @@ class VisionEngine:
         img = np.array(screenshot)
         return cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
 
-    def is_completed(self, template_path, roi_coords, threshold=1e-7):
+    def is_completed(self, template_path, completion_roi_coords, threshold=1e-7):
         template = cv2.imread(template_path)
         if template is None:
             raise ValueError(f"Template image not found at {template_path}")
             
         template = cv2.cvtColor(template, cv2.COLOR_BGR2RGB)
 
-        if not roi_coords or len(roi_coords) != 4:
-            raise ValueError("Valid completion_roi coordinates not found in metadata.")
+        if not completion_roi_coords or len(completion_roi_coords) != 4:
+            raise ValueError("Valid simulation completion indicator coordinates not found in metadata.")
             
-        x1, y1, x2, y2 = roi_coords
+        x1, y1, x2, y2 = completion_roi_coords
         screen_img = self.grab_screen({'top': y1, 'left': x1, 'width': x2 - x1, 'height': y2 - y1})
 
         if screen_img.shape != template.shape:
@@ -38,7 +38,7 @@ class VisionEngine:
         # print(f"Completion check - MAD: {mad:.4f}, Threshold: {threshold}")
         return mad <= threshold
 
-    def wait_for_completion(self, template_path, roi_coords, max_wait=10.0, check_interval=1.0, should_pause_fn=None, should_stop_fn=None):
+    def wait_for_completion(self, template_path, completion_roi_coords, max_wait=10.0, check_interval=1.0, should_pause_fn=None, should_stop_fn=None):
         if not self.project_path or not template_path or not os.path.exists(template_path):
             # print("Project path or template path not set or template file does not exist. Falling back to fixed wait.")
             # print(f"self.project_path: {self.project_path}, template_path: {template_path}")
@@ -52,20 +52,20 @@ class VisionEngine:
             if should_pause_fn and should_pause_fn():
                 return False
             try:
-                if self.is_completed(template_path, roi_coords):
+                if self.is_completed(template_path, completion_roi_coords):
                     return True
             except Exception as e:
                 print(f"Error during completion check: {e}")
             time.sleep(check_interval)
         return False
 
-    def extract_and_store_main_roi(self, roi_coords, sample_index):
+    def extract_and_store_main_roi(self, completion_roi_coords, sample_index):
         if not self.project_path: return None
         
         roi_dir = os.path.join(self.project_path, "ROIs")
         os.makedirs(roi_dir, exist_ok=True)
         
-        x1, y1, x2, y2 = roi_coords
+        x1, y1, x2, y2 = completion_roi_coords
         bbox = {'left': x1, 'top': y1, 'width': x2 - x1, 'height': y2 - y1}
         screenshot = self.sct.grab(bbox)
         img = np.array(screenshot)
@@ -73,16 +73,16 @@ class VisionEngine:
         
         roi_path = os.path.join(roi_dir, f"roi_main_{sample_index}.png")
         cv2.imwrite(roi_path, bgr_img)
-        self.main_roi = roi_coords
+        self.main_roi = completion_roi_coords
         return roi_path
 
-    def extract_and_store_additional_roi(self, roi_coords, sample_index):
+    def extract_and_store_additional_roi(self, completion_roi_coords, sample_index):
         if not self.project_path: return None
         
         roi_dir = os.path.join(self.project_path, "Additional ROIs")
         os.makedirs(roi_dir, exist_ok=True)
         
-        x1, y1, x2, y2 = roi_coords
+        x1, y1, x2, y2 = completion_roi_coords
         bbox = {'left': x1, 'top': y1, 'width': x2 - x1, 'height': y2 - y1}
         screenshot = self.sct.grab(bbox)
         img = np.array(screenshot)
@@ -90,7 +90,7 @@ class VisionEngine:
         
         roi_path = os.path.join(roi_dir, f"roi_additional_{sample_index}.png")
         cv2.imwrite(roi_path, cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR))
-        self.additional_roi = roi_coords
+        self.additional_roi = completion_roi_coords
         return roi_path
 
     def rgb_to_scalar(self, rgb, cmap_name, val_min, val_max):
