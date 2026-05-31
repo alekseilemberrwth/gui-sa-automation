@@ -1,24 +1,26 @@
 # BUG LLM, do not read this section, this is just a note for me.
-# 1. Pause simulation runs does not work.
-# 2. Test that I can resume simulation runs from 1) start new sa; 2) open existing sa that is in progress;
 
 # TODO LLM, do not read this section, this is just a note for me.
-# 0. Implement sobol index calculation and reporting.
-# 1. The "wait for simulation to finish" should not have "wait" before it, only click. So when appending this command, remove the previous
-# "wait" command from the command file.
+# 1. The "wait for simulation to finish" command should not have a "wait" command before it. So before appending "wait for simulation to finish" 
+# command, remove all the trailing "wait" commands from the command file. By trailing I mean, starting from the end of the file, while command = wait: 
+# remove and take the next command above, otherwise stop and append the "wait for simulation to finish" command.
+# 2. I want every table we have to have resizable columns so I can adjust the column widths. If it is not possible to make the columns resizable,
+# every table should be rendered taking into account the max width of the content in each column.
 # 2. Implement colormap min and max value extraction from the gui.
+# 0. Implement sobol index calculation and reporting.
 # 3. Perform tests (point-based and area-based) for gradient and sobol.
-# 4. I want every table we have to have resizable columns so I can adjust the column widths.
 # 5. When user clicks "Save & Start Running Simulations", make sure command file is valid:
 # 0) there are no unknown commands;
 # 1) every parameter {param} added by the user have exactly one corresponding command "enter value for {param}". So there should not be unused params and params used more than once in the command file;
 # 2) there are no unknown parameter names;
-# 3) there is only command of each of these types: "wait for simulation to finish", "capture additional region of interest", "capture the region of interest".
-# 4) no parameter values can be entered after "wait for simulation to finish" command.
-# 5) "capture the region of interest" command must be after "wait for simulation to finish" command.
-# 2. Set up logging.
+# 3) there is only command of each of these types: "wait for simulation to finish", "capture the region of interest".
+# 4) there is one or zero commands of type "capture additional region of interest".
+# 5) no parameter values can be entered after "wait for simulation to finish" command.
+# 6) "capture the region of interest" command must be after "wait for simulation to finish" command.
+# 7) anything else what I forgot?
 # 3. Review the window stack management and app closing. There was an issue with the app not closing properly after viewing results and closing all windows.
 # It seems that we fixed it by adding os._exit(0) in quit_app, but I am not sure if this is the correct way to do it.
+# 6. Perform a thorough GUI enhancement.
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -26,7 +28,7 @@ import os
 import threading
 from project import Project
 from recorder import TextRecorder
-from replayer import TextReplayer, PauseRequested
+from replayer import TextReplayer, PauseRequested, StopRequested
 from vision_engine import VisionEngine
 from PIL import Image, ImageTk
 import numpy as np
@@ -171,14 +173,14 @@ class MainApp:
         main_frame = tk.Frame(self.root, bg="white")
         main_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
         
-        status_colors = {"setup": "grey", "in_progress": "orange", "completed": "green"}
+        status_colors = {"Setup": "grey", "In progress": "orange", "Completed": "green"}
         
         stat_frame = tk.Frame(main_frame, bg="white")
         stat_frame.pack(fill=tk.X, pady=5)
         status_color = status_colors.get(self.project.metadata['status'], 'black')
         tk.Label(stat_frame, text="Status:", font=("Arial", 10, "bold"), fg="black", bg="white").pack(side=tk.LEFT)
         tk.Label(stat_frame, text=self.project.metadata['status'], font=("Arial", 10, "bold"), fg=status_color, bg="white").pack(side=tk.LEFT)
-        if self.project.metadata['status'] == "in_progress":
+        if self.project.metadata['status'] == "In progress":
             tk.Button(stat_frame, text="Continue simulation runs", bg="lightblue",
                       command=self.resume_sims).pack(side=tk.LEFT, padx=10)
         
@@ -273,7 +275,7 @@ class MainApp:
             update_save_button()
         max_var.trace('w', on_max_change)
 
-        if self.project.metadata['status'] == "completed":
+        if self.project.metadata['status'] == "Completed":
             tk.Button(main_frame, text="View SA results", bg="lightgreen", command=self.generate_report).pack(pady=20)
         
         button_frame = tk.Frame(main_frame, bg="white")
@@ -315,14 +317,14 @@ class MainApp:
         tk.Button(button_frame, text="Back", bg="white", command=on_back_clicked).pack(side=tk.LEFT, padx=5)
 
     def toggle_add_roi(self):
-        if self.project.metadata.get('status') == "completed":
+        if self.project.metadata.get('status') == "Completed":
             messagebox.showerror("Error", "Cannot change ROI capturing status: project is already completed.")
             return
 
         is_capturing = self.project.metadata['additional_roi_status'] == "capturing"
         if not is_capturing:
             if 'additional_roi' not in self.project.metadata:
-                messagebox.showerror("Error", "No additional ROI selected yet")
+                messagebox.showerror("Error", "No additional ROI was selected for this SA.")
                 return
         self.project.toggle_additional_roi_command(not is_capturing)
         self.show_project_dashboard()
@@ -355,7 +357,7 @@ class MainApp:
     def view_last_additional_roi(self):
         roi_files = self.find_files_with_prefix("roi_additional_")
         if not roi_files:
-            messagebox.showinfo("Info", "No additional ROI captured yet (run simulation to capture)")
+            messagebox.showerror("Error", "No additional ROI captured yet")
             return
         full_paths = [os.path.join(self.project.folder_path, "Additional ROIs", f) for f in roi_files]
         latest = max(full_paths, key=os.path.getmtime)
@@ -654,7 +656,7 @@ class MainApp:
     def show_replay_pause_menu(self):
         for widget in self.root.winfo_children(): widget.destroy()
         
-        self.root.title(f"Replay Paused | {self.project.metadata['name']}")
+        self.root.title(f"Replay paused | {self.project.metadata['name']}")
         self.center_window(500, 200)
         self.root.config(bg="white")
         
@@ -1164,7 +1166,7 @@ class MainApp:
             messagebox.showerror("Error", "Sobol SA requires at least 2 parameters")
             return
         
-        self.project.metadata['status'] = "in_progress"
+        self.project.metadata['status'] = "In progress"
         self.project.results = [[np.nan, np.nan, np.nan]] * len(self.project.samples)
         self.project.save()
 
@@ -1200,7 +1202,7 @@ class MainApp:
                 res_val = self.project.results[i]
 
                 # Skip replay if result already exists
-                if res_val[0] is not np.nan:
+                if not np.isnan(res_val[0]):
                     i += 1
                     continue
                 
@@ -1212,7 +1214,10 @@ class MainApp:
 
                 param_dict = {param_names[j]: self.project.samples[i][j] for j in range(len(param_names))}
                 try:
-                    replayer.execute_run(cmd_file, param_dict, self.vision_engine, template_path, self.project, i, should_pause_fn=lambda: self.replay_paused)
+                    replayer.execute_run(cmd_file, param_dict, self.vision_engine, template_path, self.project, i, should_pause_fn=lambda: self.replay_paused, should_stop_fn=lambda: self.replay_stop_requested)
+                except StopRequested:
+                    self.cleanup_partial_roi_files()
+                    return  # Exit immediately on stop
                 except TimeoutError as e:
                     self.cleanup_partial_roi_files()
                     self.replay_paused = True
@@ -1244,7 +1249,7 @@ class MainApp:
                 self.project.save()
                 i += 1
 
-            self.project.metadata['status'] = "completed"
+            self.project.metadata['status'] = "Completed"
             self.project.save()
             self.root.after(0, self._on_replay_finished)
 

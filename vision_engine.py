@@ -38,7 +38,7 @@ class VisionEngine:
         # print(f"Completion check - MAD: {mad:.4f}, Threshold: {threshold}")
         return mad <= threshold
 
-    def wait_for_completion(self, template_path, roi_coords, max_wait=10.0, check_interval=1.0, should_pause_fn=None):
+    def wait_for_completion(self, template_path, roi_coords, max_wait=10.0, check_interval=1.0, should_pause_fn=None, should_stop_fn=None):
         if not self.project_path or not template_path or not os.path.exists(template_path):
             # print("Project path or template path not set or template file does not exist. Falling back to fixed wait.")
             # print(f"self.project_path: {self.project_path}, template_path: {template_path}")
@@ -47,6 +47,8 @@ class VisionEngine:
         
         start_time = time.time()
         while time.time() - start_time < max_wait:
+            if should_stop_fn and should_stop_fn():
+                return False
             if should_pause_fn and should_pause_fn():
                 return False
             try:
