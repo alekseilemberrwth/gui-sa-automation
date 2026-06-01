@@ -20,11 +20,11 @@ class TextReplayer:
         self.k_ctrl.press(keyboard.Key.ctrl)
         self.k_ctrl.press('a')
         self.k_ctrl.release('a')
-        time.sleep(0.1)
+        time.sleep(0.5)
         self.k_ctrl.press('c')
         self.k_ctrl.release('c')
         self.k_ctrl.release(keyboard.Key.ctrl)
-        time.sleep(0.1)
+        time.sleep(0.5)
 
         #print(f"Copied selection to clipboard: {pyperclip.paste()}")
 
@@ -112,7 +112,7 @@ class TextReplayer:
                 if param_name in param_dict:
                     self.inject_value(param_dict[param_name])
 
-            elif cmd in ("capture colormap min value", "capture colormap max value"):
+            elif cmd in ("select colormap min value field", "select colormap max value field"):
                 self._copy_selection_to_clipboard()
                 value_str = pyperclip.paste()
                 try:
@@ -120,12 +120,12 @@ class TextReplayer:
                 except ValueError:
                     raise ValueError(f"Invalid clipboard value for '{cmd}': {value_str}")
 
-                if cmd.endswith("min value"):
+                if cmd.endswith("min value field"):
                     project.results[sample_index][3] = value
                 else:
                     project.results[sample_index][4] = value
                 
-                #print(f"execute_run: Captured colormap value for '{cmd}'")
+                #print(f"execute_run: '{cmd}'")
                 #print(f"execute_run: Project results [{sample_index}] = {project.results[sample_index]}")
 
             elif cmd == "capture the region of interest":

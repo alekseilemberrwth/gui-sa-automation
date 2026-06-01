@@ -1,7 +1,9 @@
 # BUG LLM, do not read this section, this is just a note for me.
-# -
+# - why 2 screenshots are same?
+# - we are not taking the correct min colormap value again
 
 # TODO LLM, do not read this section, this is just a note for me.
+# - When we open existing SA and it has the Setup status, we should allow the user to continue recording through the button "Continue recording" in the Open existing project dashboard.
 # - Try to enhance colormap inversion. Now it is simple argmin Euclidean distance, but maybe we can do something more advanced.
 # - Implement sobol index calculation and reporting.
 # - Implement additional stats over the average pixels from many simulation runs like mean, median, std, etc. and include them in the report.
@@ -165,6 +167,15 @@ class MainApp:
         self.vision_engine = VisionEngine(self.project.folder_path)
         self.show_project_dashboard()
 
+    def continue_recording(self):
+        cmd_file = os.path.join(self.project.folder_path, "commands.txt")
+        self.recorder = TextRecorder(cmd_file, lambda: self.root.after(0, self.show_recording_menu_from_pause))
+        self.vision_engine = VisionEngine(self.project.folder_path)
+        self.recording_paused = True
+        self.root.deiconify()
+        self.push_screen("recording_menu")
+        self.show_recording_menu()
+
     def show_project_dashboard(self):
         for widget in self.root.winfo_children(): widget.destroy()
         
@@ -183,7 +194,10 @@ class MainApp:
         status_color = status_colors.get(self.project.metadata['status'], 'black')
         tk.Label(stat_frame, text="Status:", font=("Arial", 10, "bold"), fg="black", bg="white").pack(side=tk.LEFT)
         tk.Label(stat_frame, text=self.project.metadata['status'], font=("Arial", 10, "bold"), fg=status_color, bg="white").pack(side=tk.LEFT)
-        if self.project.metadata['status'] == "In progress":
+        if self.project.metadata['status'] == "Setup":
+            tk.Button(stat_frame, text="Continue recording", bg="lightblue",
+                      command=self.continue_recording).pack(side=tk.LEFT, padx=10)
+        elif self.project.metadata['status'] == "In progress":
             tk.Button(stat_frame, text="Continue simulation runs", bg="lightblue",
                       command=self.resume_sims).pack(side=tk.LEFT, padx=10)
         
@@ -201,7 +215,7 @@ class MainApp:
         
         sa_type = self.project.metadata.get('sa_type', '')
         headers = ["Name", "Range"]
-        if sa_type == 'Gradient-Based': headers += ["Point", "Step"]
+        if sa_type == 'Local Gradient Calculation': headers += ["Point", "Step"]
         widths = [18, 24, 14, 14]
         header_row = tk.Frame(param_table, bg="lightgrey")
         header_row.pack(fill=tk.X)
@@ -216,7 +230,7 @@ class MainApp:
                 row.pack(fill=tk.X)
                 tk.Label(row, text=pname, bg="white", width=widths[0], anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
                 tk.Label(row, text=f"[{bounds['min']}, {bounds['max']}]", bg="white", width=widths[1], anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-                if sa_type == 'Gradient-Based':
+                if sa_type == 'Local Gradient Calculation':
                     grad_params = self.project.metadata.get('sa_params', {}).get(pname, {})
                     tk.Label(row, text=str(grad_params.get('point', '')), bg="white", width=widths[2], anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
                     tk.Label(row, text=str(grad_params.get('step', '')), bg="white", width=widths[3], anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
@@ -245,8 +259,8 @@ class MainApp:
         tk.Label(cmap_name_frame, text="Colormap:", bg="white").pack(side=tk.LEFT)
         cmap_var = tk.StringVar(value=self.project.metadata['colormap']['name'])
         cmap_dropdown = ttk.Combobox(cmap_name_frame, textvariable=cmap_var, 
-                                     values=['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'rainbow'],
-                                     state='readonly', width=15)
+                                     values=['viridis', 'turbo'],
+                                     state='readonly', width=20)
         cmap_dropdown.pack(side=tk.LEFT, padx=5)
 
         def on_cmap_change(*args):
@@ -333,12 +347,12 @@ class MainApp:
         latest = max(full_paths, key=os.path.getmtime)
         os.startfile(latest)
 
-    def capture_colormap_value(self, value_type):
+    def select_colormap_value_field(self, value_type):
         if value_type not in ("min", "max"):
-            raise ValueError("Invalid value_type for capture_colormap_value. Must be 'min' or 'max'.")
-        cmd = f"capture colormap {value_type} value"
+            raise ValueError("Invalid value_type for select_colormap_value_field. Must be 'min' or 'max'.")
+        cmd = f"select colormap {value_type} value field"
         self._add_unique_command(cmd)
-        messagebox.showinfo("Info", f"Captured colormap {value_type} value")
+        messagebox.showinfo("Info", f"Selected colormap {value_type} value field")
         self.show_recording_menu()
 
     def capture_completion_indicator(self):
@@ -420,7 +434,7 @@ class MainApp:
         sa_type = self.project.metadata.get('sa_type')
         if sa_type == 'Sobol (SALib)':
             messagebox.showinfo("Info", "Sobol report to be implemented")
-        elif sa_type == 'Gradient-Based':
+        elif sa_type == 'Local Gradient Calculation':
             self.show_gradient_report()
 
     def show_gradient_report(self):
@@ -430,7 +444,7 @@ class MainApp:
         cmap = self.project.metadata['colormap']
 
         report_win = tk.Toplevel(self.root)
-        report_win.title("Gradient-Based SA Results")
+        report_win.title("Local Gradient Calculation Results")
         report_win.geometry(f"600x{max(len(param_names)*100, 500)}")
         
         # Convert results to scalars using the colormap inversion
@@ -443,7 +457,7 @@ class MainApp:
 
             scalar = self.vision_engine.rgb_to_scalar(rgb, cmap['name'], val_min, val_max)
             scalars.append(scalar)
-            #print(f"Converted result {rgb} to scalar {scalar} using colormap {cmap['name']} with min {val_min} and max {val_max}")
+            print(f"Converted result {rgb} to scalar {scalar} using colormap {cmap['name']} with min {val_min} and max {val_max}")
 
         gradients = []
         points = []
@@ -594,8 +608,8 @@ class MainApp:
         tk.Button(main_frame, text="Set simulation completion indicator", command=self.capture_completion_indicator, bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="Capture region of interest", command=lambda: self.start_roi_selection("main_roi"), bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="Capture additional region of interest", command=lambda: self.start_roi_selection("additional_roi"), bg="white").pack(fill=tk.X, padx=20, pady=5)
-        tk.Button(main_frame, text="Capture colormap min value", command=lambda: self.capture_colormap_value("min"), bg="white").pack(fill=tk.X, padx=20, pady=5)
-        tk.Button(main_frame, text="Capture colormap max value", command=lambda: self.capture_colormap_value("max"), bg="white").pack(fill=tk.X, padx=20, pady=5)
+        tk.Button(main_frame, text="Select colormap min value field", command=lambda: self.select_colormap_value_field("min"), bg="white").pack(fill=tk.X, padx=20, pady=5)
+        tk.Button(main_frame, text="Select colormap max value field", command=lambda: self.select_colormap_value_field("max"), bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="View command file", command=self.view_cmd_file, bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="Select SA type", command=self.sa_setup_ui, bg="white").pack(fill=tk.X, padx=20, pady=5)
         
@@ -967,7 +981,7 @@ class MainApp:
         tk.Label(main_frame, text="SA Type:", font=("Arial", 10, "bold"), bg="white").pack(pady=10)
         type_var = tk.StringVar(value=self.project.metadata.get('sa_type', ''))
         
-        sa_types = ['Sobol (SALib)', 'Gradient-Based']
+        sa_types = ['Sobol (SALib)', 'Local Gradient Calculation']
         cb = ttk.Combobox(main_frame, textvariable=type_var, values=sa_types, state='readonly')
         cb.pack(pady=10, fill=tk.X)
         
@@ -987,7 +1001,7 @@ class MainApp:
                 n_dropdown = ttk.Combobox(param_frame, textvariable=n_var, values=[str(p) for p in powers_of_2], state='readonly')
                 n_dropdown.pack()
                 param_frame.sobol_n = n_var
-            elif sa_type == 'Gradient-Based':
+            elif sa_type == 'Local Gradient Calculation':
                 tk.Label(param_frame, text="Parameter settings", bg="white", font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=10)
                 table_frame = tk.Frame(param_frame, bg="white")
                 table_frame.pack(fill=tk.X, padx=10)
@@ -1000,7 +1014,7 @@ class MainApp:
                 tk.Label(header_frame, text="Step", bg="lightgrey", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
                 
                 param_entries = {}
-                saved_grad_params = self.project.metadata.get('sa_params', {}) if self.project.metadata.get('sa_type') == 'Gradient-Based' else {}
+                saved_grad_params = self.project.metadata.get('sa_params', {}) if self.project.metadata.get('sa_type') == 'Local Gradient Calculation' else {}
                 for param_name, bounds in self.project.metadata['params'].items():
                     row_frame = tk.Frame(table_frame, bg="white")
                     row_frame.pack(fill=tk.X)
@@ -1061,7 +1075,7 @@ class MainApp:
                     except: pass
                 samples = sobol_sample(problem, n)
                 self.project.metadata['sa_params'] = {'n': n}
-            elif sa_type == 'Gradient-Based':
+            elif sa_type == 'Local Gradient Calculation':
                 if hasattr(frame, 'gradient_params'):
                     gradient_params = {}
                     for param_name, entries in frame.gradient_params.items():
@@ -1140,8 +1154,8 @@ class MainApp:
         
         sa_type = self.project.metadata['sa_type']
         num_params = len(self.project.metadata['params'])
-        if sa_type == 'Gradient-Based' and num_params < 1:
-            messagebox.showerror("Error", "Gradient-Based SA requires at least 1 parameter")
+        if sa_type == 'Local Gradient Calculation' and num_params < 1:
+            messagebox.showerror("Error", "Local Gradient Calculation requires at least 1 parameter")
             return
         elif sa_type == 'Sobol (SALib)' and num_params < 2:
             messagebox.showerror("Error", "Sobol SA requires at least 2 parameters")
@@ -1227,7 +1241,7 @@ class MainApp:
 
                 self.project.results[i][0:3] = avg_rgb
 
-                #print(f"start_replay: Project results [{i}] = {self.project.results[i]}")
+                print(f"start_replay: Project results [{i}] = {self.project.results[i]}")
 
                 self.project.save()
                 i += 1

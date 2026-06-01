@@ -1,10 +1,6 @@
-# Good point to demonstrate local gradient calculation:
-# x1 = -1.0 +- 0.1, x2 = 1.0 +- 0.1, x3 = 2.1 +- 0.1;
-# a = 5.05, b = 0.2;
-# colorbar min max: -10, 14
-
 import tkinter as tk
 from tkinter import ttk
+from tkinter import messagebox
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -121,7 +117,7 @@ class BenchmarkApp:
         cmap_frame.pack(pady=10)
         tk.Label(cmap_frame, text="Colormap:", bg="white").pack(side=tk.LEFT)
         self.cmap_var = tk.StringVar(value=self.current['colormap'])
-        cmaps = ttk.Combobox(cmap_frame, textvariable=self.cmap_var, values=['viridis', 'turbo', 'binary (from white to black)', 'gray (from black to white)'], width=10)
+        cmaps = ttk.Combobox(cmap_frame, textvariable=self.cmap_var, values=['viridis', 'turbo', 'binary (from white to black)', 'gray (from black to white)'], width=20)
         cmaps.pack(side=tk.LEFT)
         
         # Colorbar min max
@@ -186,7 +182,7 @@ class BenchmarkApp:
         self.root.update_idletasks()
 
         try:
-            self.update_current_from_inputs(include_sim_time=True)
+            self.update_current_from_inputs()
         except ValueError:
             self.status_label.config(text="Invalid input", fg="red")
             self.hide_progress()
@@ -202,7 +198,7 @@ class BenchmarkApp:
 
     def update_plot(self):
         try:
-            self.update_current_from_inputs(include_sim_time=False)
+            self.update_current_from_inputs()
             # Validate colorbar min and max
             if self.current['colorbar_min'].strip():
                 float(self.current['colorbar_min'])
@@ -244,8 +240,8 @@ class BenchmarkApp:
             self.hide_progress()
             return
 
-        self.current['colorbar_min'] = f"{self.Z.min():.4f}"
-        self.current['colorbar_max'] = f"{self.Z.max():.4f}"
+        self.current['colorbar_min'] = f"{self.Z.min()}"
+        self.current['colorbar_max'] = f"{self.Z.max()}"
         self.min_var.set(self.current['colorbar_min'])
         self.max_var.set(self.current['colorbar_max'])
         self.draw_data()
@@ -270,6 +266,10 @@ class BenchmarkApp:
         b = np.linspace(self.current['b_min'], self.current['b_max'], self.current['b_bins'])
         A, B = np.meshgrid(a, b)
         self.Z = ishigami(self.current['x1'], self.current['x2'], self.current['x3'], A, B)
+        # print('Meshgrid A:')
+        # print(A)
+        # print('Meshgrid B:')
+        # print(B)
 
     def draw_data(self, vmin=None, vmax=None):
         if self.Z is None:
@@ -306,10 +306,12 @@ class BenchmarkApp:
         # Let the axes fill the canvas shape instead of forcing a square
         self.ax.set_aspect('auto')
         self.canvas.draw()
+
+        self.root.update_idletasks()  # Ensure the canvas updates
         
         # plt.show()
 
-    def update_current_from_inputs(self, include_sim_time=False):
+    def update_current_from_inputs(self):
         self.current['x1'] = float(self.vars['x1'].get())
         self.current['x2'] = float(self.vars['x2'].get())
         self.current['x3'] = float(self.vars['x3'].get())
@@ -322,9 +324,8 @@ class BenchmarkApp:
         self.current['colormap'] = self.cmap_var.get()
         self.current['colorbar_min'] = self.min_var.get().strip()
         self.current['colorbar_max'] = self.max_var.get().strip()
-        if include_sim_time:
-            self.current['sim_time_min'] = float(self.sim_time_min_var.get())
-            self.current['sim_time_max'] = float(self.sim_time_max_var.get())
+        self.current['sim_time_min'] = float(self.sim_time_min_var.get())
+        self.current['sim_time_max'] = float(self.sim_time_max_var.get())
 
     def apply_current_to_controls(self):
         self.vars['x1'].set(str(self.current['x1']))
@@ -345,12 +346,8 @@ class BenchmarkApp:
     def reset_parameters(self):
         self.current = self.defaults.copy()
         self.apply_current_to_controls()
-        try:
-            self.compute_data()
-            self.draw_data()
-        except ValueError:
-            self.ax.clear()
-            self.canvas.draw_idle()
+        self.compute_data()
+        self.draw_data()
         self.status_label.config(text="Parameters reset", fg="blue")
 
     def on_resize(self, event):
