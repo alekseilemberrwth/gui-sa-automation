@@ -117,7 +117,7 @@ class BenchmarkApp:
         cmap_frame.pack(pady=10)
         tk.Label(cmap_frame, text="Colormap:", bg="white").pack(side=tk.LEFT)
         self.cmap_var = tk.StringVar(value=self.current['colormap'])
-        cmaps = ttk.Combobox(cmap_frame, textvariable=self.cmap_var, values=['viridis', 'turbo', 'binary (from white to black)', 'gray (from black to white)'], width=20)
+        cmaps = ttk.Combobox(cmap_frame, textvariable=self.cmap_var, values=['viridis', 'turbo', 'binary', 'gray'], width=10) # binary is from white to black, gray is from black to white
         cmaps.pack(side=tk.LEFT)
         
         # Colorbar min max
@@ -145,12 +145,12 @@ class BenchmarkApp:
         self.sim_time_max_var = tk.StringVar(value=str(self.current['sim_time_max']))
         tk.Entry(sim_max_frame, textvariable=self.sim_time_max_var, width=10, bg="white").pack(side=tk.LEFT, padx=(5, 0))
         
-        tk.Button(left_frame, text="Update plot", command=self.update_plot, bg="white").pack(pady=10)
-        tk.Button(left_frame, text="Reset parameters", command=self.reset_parameters, bg="white").pack(pady=(0, 10))
-        tk.Button(left_frame, text="Run simulation", command=self.run_sim, bg="white").pack(side=tk.BOTTOM, pady=20)
-        
-        self.status_label = tk.Label(left_frame, text="Idle", fg="blue", bg="white")
-        self.status_label.pack(side=tk.BOTTOM)
+        self.update_plot_button = tk.Button(left_frame, text="Update plot", command=self.update_plot, bg="white")
+        self.update_plot_button.pack(pady=10)
+        self.reset_parameters_button = tk.Button(left_frame, text="Reset parameters", command=self.reset_parameters, bg="white")
+        self.reset_parameters_button.pack(pady=(0, 10))
+        self.run_sim_button = tk.Button(left_frame, text="Run simulation", command=self.run_sim, bg="white")
+        self.run_sim_button.pack(side=tk.BOTTOM, pady=20)
 
         self.progress_frame = tk.Frame(left_frame, bg="white")
         self.progress_bar = ttk.Progressbar(self.progress_frame, orient="horizontal", mode="determinate", maximum=100)
@@ -177,14 +177,18 @@ class BenchmarkApp:
         self.Z = None  # Store the data for updating
 
     def run_sim(self):
-        self.status_label.config(text="Running...", fg="orange")
         self.show_progress()
+        # Deactivate buttons to prevent multiple runs
+        self.update_plot_button.config(state=tk.DISABLED)
+        self.reset_parameters_button.config(state=tk.DISABLED)
+        self.run_sim_button.config(state=tk.DISABLED)
+
         self.root.update_idletasks()
 
         try:
             self.update_current_from_inputs()
         except ValueError:
-            self.status_label.config(text="Invalid input", fg="red")
+            messagebox.showerror("Error", "Invalid input parameters")
             self.hide_progress()
             return
 
@@ -216,9 +220,9 @@ class BenchmarkApp:
             except (ValueError, TypeError):
                 vmax = None
             self.draw_data(vmin=vmin, vmax=vmax)
-            self.status_label.config(text="Plot updated", fg="green")
+            messagebox.showinfo("Success", "The plot has been updated with the new parameters.")
         except ValueError:
-            self.status_label.config(text="Invalid plot parameters", fg="red")
+            messagebox.showerror("Error", "Invalid plot parameters")
 
     def _advance_progress(self):
         elapsed = time.time() - self.sim_start_time
@@ -236,7 +240,7 @@ class BenchmarkApp:
         try:
             self.compute_data()
         except ValueError:
-            self.status_label.config(text="Invalid function parameters", fg="red")
+            messagebox.showerror("Error", "Invalid function parameters")
             self.hide_progress()
             return
 
@@ -247,8 +251,13 @@ class BenchmarkApp:
         self.draw_data()
         self.progress_bar['value'] = 100
         self.progress_percent_label.config(text="100%")
-        self.status_label.config(text="Simulation completed", fg="green")
         self.hide_progress()
+        messagebox.showinfo("Success", "Simulation completed!")
+        # Reactivate buttons
+        self.update_plot_button.config(state=tk.NORMAL)
+        self.reset_parameters_button.config(state=tk.NORMAL)
+        self.run_sim_button.config(state=tk.NORMAL)
+
 
     def show_progress(self):
         if not self.progress_frame.winfo_ismapped():
@@ -348,7 +357,7 @@ class BenchmarkApp:
         self.apply_current_to_controls()
         self.compute_data()
         self.draw_data()
-        self.status_label.config(text="Parameters reset", fg="blue")
+        messagebox.showinfo("Success", "All parameters have been reset to their default values.")
 
     def on_resize(self, event):
         # Get the actual canvas size and adjust figure

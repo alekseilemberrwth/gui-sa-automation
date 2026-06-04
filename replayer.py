@@ -75,7 +75,8 @@ class TextReplayer:
                 completion_roi_coords = project.metadata.get('completion_roi')
                 success = vision_engine.wait_for_completion(template_path, completion_roi_coords, max_wait=timeout, should_pause_fn=should_pause_fn, should_stop_fn=should_stop_fn)
                 if not success:
-                    raise TimeoutError(f"Simulation did not finish within {timeout} seconds.")
+                    if not (should_stop_fn and should_stop_fn() or should_pause_fn and should_pause_fn()):
+                        raise TimeoutError(f"Simulation did not finish within {timeout} seconds.")
                 
             elif cmd.startswith("wait "):
                 delay = float(cmd.split()[1])
@@ -111,6 +112,9 @@ class TextReplayer:
                 param_name = cmd.replace("enter value for ", "").strip()
                 if param_name in param_dict:
                     self.inject_value(param_dict[param_name])
+                else:
+                    # raise ValueError(f"Parameter '{param_name}' not found in param_dict for command: {cmd}")
+                    pass # Ignore if parameter not found
 
             elif cmd in ("select colormap min value field", "select colormap max value field"):
                 self._copy_selection_to_clipboard()
@@ -139,6 +143,9 @@ class TextReplayer:
                     coords = project.metadata['additional_roi']
                     if coords:
                         vision_engine.extract_and_store_additional_roi(coords, sample_index)
+            else:
+                # raise ValueError(f"Unknown command in command file: {cmd}")
+                pass # Ignore unknown command
 
             self._check_stop(should_stop_fn)
             self._check_pause(should_pause_fn)

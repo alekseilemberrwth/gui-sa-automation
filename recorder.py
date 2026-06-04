@@ -48,7 +48,7 @@ class TextRecorder:
 
         self._record_delay()
 
-        if key == keyboard.Key.esc:
+        if key == keyboard.Key.home:
             self.stop_and_save()
             self.on_menu_trigger()
             return
@@ -64,7 +64,7 @@ class TextRecorder:
 
     def on_release(self, key):
         if not self.recording: return
-        if key == keyboard.Key.esc: return
+        if key == keyboard.Key.home: return
         
         self._record_delay()
         if hasattr(key, 'char') and key.char:

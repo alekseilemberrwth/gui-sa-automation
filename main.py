@@ -1,27 +1,29 @@
 # BUG LLM, do not read this section, this is just a note for me.
-# - why 2 screenshots are same?
-# - we are not taking the correct min colormap value again
+#
 
 # TODO LLM, do not read this section, this is just a note for me.
-# - When we open existing SA and it has the Setup status, we should allow the user to continue recording through the button "Continue recording" in the Open existing project dashboard.
-# - Try to enhance colormap inversion. Now it is simple argmin Euclidean distance, but maybe we can do something more advanced.
+# - Move colormap selection from project dashboard to recording pause menu as a new button before the Select colormap min value field. On clicking this new button we should transform
+# the recording pause menu into a colormap selection window which will contain just a dropdown with 2 options: viridis and turbo, and Ok and Cancel buttons.
+# On clicking Ok, we save the selected colormap to project metadata and transform the window back to recording pause menu. On clicking Cancel, we just transform the window
+# back to recording pause menu without saving changes.
+# - Correspondingly, move the colormap inversion logic as the last step of a single simulation run. And now the results.npy should be a 1-dim array with the scalar results of each simulation run.
+# The generate_gradient_report function should be changed accordingly to handle this new shape of the results array.
 # - Implement sobol index calculation and reporting.
-# - Implement additional stats over the average pixels from many simulation runs like mean, median, std, etc. and include them in the report.
 # - Perform tests (point-based and area-based) for gradient and sobol.
-# - When user clicks "Save & Start Running Simulations", make sure command file is valid:
-# 0) there are no unknown commands;
-# 1) every parameter {param} added by the user have exactly one corresponding command "enter value for {param}". So there should not be unused params and params used more than once in the command file;
-# 2) there are no unknown parameter names;
-# 3) there is only command of each of these types: "wait for simulation to finish", "capture the region of interest".
-# 4) there is one or zero commands of type "capture additional region of interest".
-# 5) no parameter values can be entered after "wait for simulation to finish" command.
-# 6) "capture the region of interest" command must be after "wait for simulation to finish" command.
-# 7) anything else what I forgot?
-# 6. Review the window stack management and app closing. There was an issue with the app not closing properly after viewing results and closing all windows.
+# - Review the window stack management and app closing. There was an issue with the app not closing properly after viewing results and closing all windows. 
 # It seems that we fixed it by adding os._exit(0) in quit_app, but I am not sure if this is the correct way to do it.
+
+# - Perform a thorough GUI enhancement, including:
 # - I want every table we have in the app to have resizable-by-user (by dragging the column borders) columns so I can adjust the column widths. If it is not possible to make the columns
 # resizable, every table should be rendered taking into account the max width of the content in each column.
-# - Perform a thorough GUI enhancement.
+# - When displaying results for sobol or gradient, we should have scrollers for both evaluation points and plots, so we support any display size without parts of the output being cut off.
+# - After we entered project name, we start recording. We should transform the window with the project name entry into the recording menu, now we keep the project name entry window
+# until the user presses Home to stop recording, and only then we transform it into the recording menu. We should transform it immediately after the user enters the project name and
+# clicks Ok.
+# - When we record user's actions, our window with recording paused menu is just hidden. It is ok, but all the buttons should be deactivated and reactivated back when he presses Home
+# to pause recording.
+# - When all the simulation runs are completed, we show a messagebox, but the window behind it is still recording pause menu or replay pause menu. When a user clicks Ok on the messagebox,
+# we transform the window behind it into the main menu. We should transform the window behind the messagebox into the main menu BEFORE showing the messagebox.
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -45,7 +47,6 @@ class MainApp:
     def __init__(self, root):
         self.root = root
         self.root.title("SA Automation")
-        self.center_window(500, 600)
         self.root.config(bg="white")
         self.project = None
         self.recorder = None
@@ -155,7 +156,7 @@ class MainApp:
         
         self.project = Project(folder)
         if not self.project.load():
-            messagebox.showerror("Error", "Invalid Project Folder structure.")
+            messagebox.showerror("Error", "Failed to load project. Project data might be corrupted or incomplete.")
             return
         
         err = self.project.validate()
@@ -167,7 +168,7 @@ class MainApp:
         self.vision_engine = VisionEngine(self.project.folder_path)
         self.show_project_dashboard()
 
-    def continue_recording(self):
+    def continue_recording_actions(self):
         cmd_file = os.path.join(self.project.folder_path, "commands.txt")
         self.recorder = TextRecorder(cmd_file, lambda: self.root.after(0, self.show_recording_menu_from_pause))
         self.vision_engine = VisionEngine(self.project.folder_path)
@@ -195,8 +196,8 @@ class MainApp:
         tk.Label(stat_frame, text="Status:", font=("Arial", 10, "bold"), fg="black", bg="white").pack(side=tk.LEFT)
         tk.Label(stat_frame, text=self.project.metadata['status'], font=("Arial", 10, "bold"), fg=status_color, bg="white").pack(side=tk.LEFT)
         if self.project.metadata['status'] == "Setup":
-            tk.Button(stat_frame, text="Continue recording", bg="lightblue",
-                      command=self.continue_recording).pack(side=tk.LEFT, padx=10)
+            tk.Button(stat_frame, text="Continue recording actions", bg="lightblue",
+                      command=self.continue_recording_actions).pack(side=tk.LEFT, padx=10)
         elif self.project.metadata['status'] == "In progress":
             tk.Button(stat_frame, text="Continue simulation runs", bg="lightblue",
                       command=self.resume_sims).pack(side=tk.LEFT, padx=10)
@@ -204,7 +205,9 @@ class MainApp:
         info_frame = tk.Frame(main_frame, bg="white")
         info_frame.pack(fill=tk.X, pady=5)
         tk.Label(info_frame, text=f"SA type: {self.project.metadata.get('sa_type', '-')}", bg="white").pack(side=tk.LEFT, padx=2)
-        tk.Label(info_frame, text=f"Runs required: {self.project.metadata.get('n_required', '-')}", bg="white").pack(side=tk.LEFT, padx=20)
+
+        simulation_runs_text = f"Simulation runs performed: {self.project.metadata.get('n_completed')}/{self.project.metadata.get('n_required')}"
+        tk.Label(info_frame, text=simulation_runs_text, bg="white").pack(side=tk.LEFT, padx=20)
         
         table_frame = tk.Frame(main_frame, bg="white", relief=tk.RIDGE, borderwidth=1)
         table_frame.pack(fill=tk.X, pady=10)
@@ -235,18 +238,11 @@ class MainApp:
                     tk.Label(row, text=str(grad_params.get('point', '')), bg="white", width=widths[2], anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
                     tk.Label(row, text=str(grad_params.get('step', '')), bg="white", width=widths[3], anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
         
-        completion_frame = tk.Frame(main_frame, bg="white")
-        completion_frame.pack(fill=tk.X, pady=10)
-        comp_button = tk.Button(completion_frame, text="View Simulation Completion Indicator", bg="white",
-                                command=self.view_completion_template)
-        comp_button.pack(fill=tk.X, padx=10, pady=10)
-        
         roi_frame = tk.Frame(main_frame, bg="white")
         roi_frame.pack(fill=tk.X, pady=10)
         tk.Label(roi_frame, text=f"Additional ROI status: {self.project.metadata['additional_roi_status']}", bg="white").pack(side=tk.LEFT)
         btn_text = "Stop capturing" if self.project.metadata['additional_roi_status'] == "capturing" else "Resume capturing"
-        tk.Button(roi_frame, text=btn_text, bg="white", command=self.toggle_add_roi).pack(side=tk.LEFT, padx=10)
-        tk.Button(roi_frame, text="View last additional ROI", bg="white", command=self.view_last_additional_roi).pack(side=tk.RIGHT)
+        tk.Button(roi_frame, text=btn_text, bg="white", command=self.toggle_additional_roi).pack(side=tk.LEFT, padx=10)
         
         colormap_frame = tk.Frame(main_frame, bg="white", relief=tk.RIDGE, borderwidth=1)
         colormap_frame.pack(fill=tk.X, pady=10)
@@ -300,7 +296,7 @@ class MainApp:
         
         tk.Button(button_frame, text="Back", bg="white", command=on_back_clicked).pack(side=tk.LEFT, padx=5)
 
-    def toggle_add_roi(self):
+    def toggle_additional_roi(self):
         if self.project.metadata.get('status') == "Completed":
             messagebox.showerror("Error", "Cannot change ROI capturing status: project is already completed.")
             return
@@ -315,20 +311,12 @@ class MainApp:
 
     def resume_sims(self):
         if messagebox.askokcancel("Confirm", "Resume simulation running?"):
-            self.root.iconify()  # Hide window, will appear if Esc is pressed
+            self.root.iconify()  # Hide window, will appear if Home is pressed
             self.replay_paused = False  # Start running immediately
             self.replay_stop_requested = False
             self._start_replay_keyboard_listener()
             self._replay_thread = threading.Thread(target=self.start_replay, daemon=True)
             self._replay_thread.start()
-
-    def view_completion_template(self):
-        template_files = self.find_files_with_prefix("simulation_completion_indicator")
-        if len(template_files) == 0:
-            messagebox.showinfo("Info", "No simulation completion indicator found")
-            return
-        template_path = os.path.join(self.project.folder_path, template_files[0])
-        os.startfile(template_path)
 
     def find_files_with_prefix(self, prefix):
         if prefix.startswith("roi_additional_"): folder = os.path.join(self.project.folder_path, "Additional ROIs")
@@ -337,15 +325,6 @@ class MainApp:
         
         if not os.path.exists(folder): return []
         return [f for f in os.listdir(folder) if f.startswith(prefix)]
-
-    def view_last_additional_roi(self):
-        roi_files = self.find_files_with_prefix("roi_additional_")
-        if not roi_files:
-            messagebox.showerror("Error", "No additional ROI captured yet")
-            return
-        full_paths = [os.path.join(self.project.folder_path, "Additional ROIs", f) for f in roi_files]
-        latest = max(full_paths, key=os.path.getmtime)
-        os.startfile(latest)
 
     def select_colormap_value_field(self, value_type):
         if value_type not in ("min", "max"):
@@ -459,8 +438,11 @@ class MainApp:
             scalars.append(scalar)
             print(f"Converted result {rgb} to scalar {scalar} using colormap {cmap['name']} with min {val_min} and max {val_max}")
 
+        scalars = np.array(scalars)
         gradients = []
         points = []
+
+        # Calculate gradients using central difference
         for i, name in enumerate(param_names):
             gp = grad_params.get(name, {})
             step = gp.get('step')
@@ -474,21 +456,36 @@ class MainApp:
             gradients.append(grad)
             #print(f"Parameter '{name}': step={step}, point={point}, res_neg={res_neg}, res_pos={res_pos}, gradient={grad}")
         
+        # Calculate statistics over scalars
+        scalar_stats = {
+            'min': np.min(scalars),
+            'max': np.max(scalars),
+            'mean': np.mean(scalars),
+            'median': np.median(scalars),
+            'std': np.std(scalars),
+            'mad': np.median(np.abs(scalars - np.median(scalars))) # Median Absolute Deviation from the median
+        }
+
         info_frame = tk.Frame(report_win, bg="white")
         info_frame.pack(fill=tk.X, padx=10, pady=10)
         tk.Label(info_frame, text="Evaluation Point:", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W)
-        tk.Label(info_frame, text=", ".join(points), bg="white").pack(anchor=tk.W)
+        tk.Label(info_frame, text="     ".join(points), bg="white").pack(anchor=tk.W)
+
+        stats_frame = tk.Frame(report_win, bg="white")
+        stats_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        tk.Label(stats_frame, text="Statistics:", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W)
+        tk.Label(stats_frame, text=f"Min: {scalar_stats['min']}", bg="white").pack(anchor=tk.W)
+        tk.Label(stats_frame, text=f"Max: {scalar_stats['max']}", bg="white").pack(anchor=tk.W)
+        tk.Label(stats_frame, text=f"Mean: {scalar_stats['mean']}", bg="white").pack(anchor=tk.W)
+        tk.Label(stats_frame, text=f"Median: {scalar_stats['median']}", bg="white").pack(anchor=tk.W)
+        tk.Label(stats_frame, text=f"STD: {scalar_stats['std']}", bg="white").pack(anchor=tk.W)
+        tk.Label(stats_frame, text=f"MAD: {scalar_stats['mad']}", bg="white").pack(anchor=tk.W)
 
         # Plot gradient as a barplot
-        fig_height = len(param_names) * 0.9
+        fig_height = min(10, len(param_names) * 0.9) # After 10, the captions start to be hidden
         fig, ax = plt.subplots(figsize=(6, fig_height))
 
-        bars = ax.barh(
-            param_names,
-            gradients,
-            color='skyblue',
-            height=0.8
-        )
+        bars = ax.barh(param_names, gradients)
 
         ax.set_xlabel("Partial Derivative")
         ax.set_title('Gradient Barplot')
@@ -515,6 +512,7 @@ class MainApp:
                     ha='left',
                     fontsize=9
                 )
+                bar.set_color('red')
             else:
                 ax.text(
                     grad - padding * 0.05,
@@ -524,6 +522,7 @@ class MainApp:
                     ha='right',
                     fontsize=9
                 )
+                bar.set_color('blue')
 
         fig.tight_layout()
         
@@ -577,7 +576,7 @@ class MainApp:
         self.vision_engine = VisionEngine(folder)
         
         self.root.iconify()
-        messagebox.showinfo("Recording Started", "Recording mouse and keyboard. Press Esc to pause and open the control menu.")
+        messagebox.showinfo("Recording Started", "Recording mouse and keyboard. Press Home to pause and open the control menu.")
         self.recorder.start()
 
     def show_recording_menu_from_pause(self):
@@ -634,7 +633,7 @@ class MainApp:
         self.show_replay_pause_menu()
 
     def _on_replay_key_press(self, key):
-        if key == keyboard.Key.esc and not self.replay_paused and not self.replay_stop_requested:
+        if key == keyboard.Key.home and not self.replay_paused and not self.replay_stop_requested:
             self.root.after(0, self.pause_replay)
 
     def _start_replay_keyboard_listener(self):
@@ -981,7 +980,7 @@ class MainApp:
         tk.Label(main_frame, text="SA Type:", font=("Arial", 10, "bold"), bg="white").pack(pady=10)
         type_var = tk.StringVar(value=self.project.metadata.get('sa_type', ''))
         
-        sa_types = ['Sobol (SALib)', 'Local Gradient Calculation']
+        sa_types = ['Sobol Index', 'Local Gradient Calculation']
         cb = ttk.Combobox(main_frame, textvariable=type_var, values=sa_types, state='readonly')
         cb.pack(pady=10, fill=tk.X)
         
@@ -992,16 +991,23 @@ class MainApp:
             for w in param_frame.winfo_children(): w.destroy()
             sa_type = type_var.get()
             
-            if sa_type == 'Sobol (SALib)':
+            if sa_type == 'Sobol Index':
+                if len(self.project.metadata['params']) < 2:
+                    messagebox.showerror("Error", "Sobol Index calculation requires at least 2 parameters. Please add more parameters first.")
+                    type_var.set('')
+                    return
                 powers_of_2 = [2**i for i in range(4, 13)]
                 tk.Label(param_frame, text="N (must be power of 2):", bg="white").pack()
-                current_n = self.project.metadata.get('sa_params', {}).get('n', 128)
-                if current_n not in powers_of_2: current_n = 128
+                current_n = self.project.metadata.get('sa_params', {}).get('sobol_n', 128)
                 n_var = tk.StringVar(value=str(current_n))
                 n_dropdown = ttk.Combobox(param_frame, textvariable=n_var, values=[str(p) for p in powers_of_2], state='readonly')
                 n_dropdown.pack()
                 param_frame.sobol_n = n_var
             elif sa_type == 'Local Gradient Calculation':
+                if len(self.project.metadata['params']) == 0:
+                    messagebox.showerror("Error", "Local Gradient Calculation requires at least 1 parameter. Please add parameters first.")
+                    type_var.set('')
+                    return
                 tk.Label(param_frame, text="Parameter settings", bg="white", font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=10)
                 table_frame = tk.Frame(param_frame, bg="white")
                 table_frame.pack(fill=tk.X, padx=10)
@@ -1063,18 +1069,14 @@ class MainApp:
                 'bounds': [[v['min'], v['max']] for v in self.project.metadata['params'].values()]
             }
             
-            if sa_type == 'Sobol (SALib)':
+            # Sobol sample size = N * (D + 2), for second order indices turned off, N * (2D + 2) for turned on, where D is number of parameters.
+            if sa_type == 'Sobol Index':
                 if sobol_sample is None:
                     messagebox.showerror("Error", "SALib not installed. Install with: pip install SALib")
                     return
-                n = 128
-                if hasattr(frame, 'sobol_n'):
-                    try:
-                        n_val = int(frame.sobol_n.get())
-                        if n_val in [2**i for i in range(4, 13)]: n = n_val
-                    except: pass
-                samples = sobol_sample(problem, n)
-                self.project.metadata['sa_params'] = {'n': n}
+                sobol_n = int(frame.sobol_n.get())
+                samples = sobol_sample(problem, sobol_n)
+                self.project.metadata['sa_params'] = {'sobol_n': sobol_n}
             elif sa_type == 'Local Gradient Calculation':
                 if hasattr(frame, 'gradient_params'):
                     gradient_params = {}
@@ -1124,7 +1126,7 @@ class MainApp:
 
         return np.array(samples)
 
-    def cleanup_partial_roi_files(self):
+    def cleanup_partial_simulation_run_results(self):
         current_roi_path = os.path.join(self.project.folder_path, "ROIs", f"roi_main_{self.current_sample_index}.png")
         if os.path.exists(current_roi_path):
             os.remove(current_roi_path)
@@ -1132,40 +1134,78 @@ class MainApp:
         current_additional_roi_path = os.path.join(self.project.folder_path, "Additional ROIs", f"roi_additional_{self.current_sample_index}.png")
         if os.path.exists(current_additional_roi_path):
             os.remove(current_additional_roi_path)
-
-    def start_running(self):
-        if 'main_roi' not in self.project.metadata:
-            messagebox.showerror("Error", "Please capture the region of interest first")
-            return
         
+        self.project.results[self.current_sample_index] = [np.nan, np.nan, np.nan, np.nan, np.nan]
+
+    def start_running(self):        
         cmd_file = os.path.join(self.project.folder_path, "commands.txt")
-        has_completion = False
+
+        # Perform basic validation of command file before starting simulations:
+        wait_for_simulation_to_finish_found = False
+        capture_main_roi_found = False
+        capture_additional_roi_found = False
+        min_colormap_value_field_selected = False
+        max_colormap_value_field_selected = False
         if os.path.exists(cmd_file):
             with open(cmd_file, "r") as f:
-                has_completion = any("wait for simulation to finish" in line for line in f)
+                lines = f.readlines()
+                for line in lines:
+                    stripped_line = line.strip()
+                    if stripped_line.startswith("wait for simulation to finish"):
+                        if wait_for_simulation_to_finish_found:
+                            messagebox.showerror("Error", "Multiple simulation completion indicators found in the command file. Please ensure there is only one.")
+                            return
+                        if capture_main_roi_found:
+                            messagebox.showerror("Error", "Wait for simulation to finish command must go before main region of interest capture command in the command file.")
+                            return
+                        wait_for_simulation_to_finish_found = True
+                    elif stripped_line == "capture the region of interest":
+                        if capture_main_roi_found:
+                            messagebox.showerror("Error", "Multiple main region of interest capture commands found in the command file. Please ensure there is only one.")
+                            return
+                        capture_main_roi_found = True
+                    elif stripped_line == "capture additional region of interest":
+                        if capture_additional_roi_found:
+                            messagebox.showerror("Error", "Multiple additional region of interest capture commands found in the command file. Please ensure there is only one.")
+                            return
+                        capture_additional_roi_found = True
+                    elif stripped_line == "select colormap min value field":
+                        if min_colormap_value_field_selected:
+                            messagebox.showerror("Error", "Multiple colormap min value field selection commands found in the command file. Please ensure there is only one.")
+                            return
+                        min_colormap_value_field_selected = True
+                    elif stripped_line == "select colormap max value field":
+                        if max_colormap_value_field_selected:
+                            messagebox.showerror("Error", "Multiple colormap max value field selection commands found in the command file. Please ensure there is only one.")
+                            return
+                        max_colormap_value_field_selected = True
         
-        if not has_completion:
+        if not wait_for_simulation_to_finish_found:
             messagebox.showerror("Error", "Please set the simulation completion indicator first")
             return
         
+        if not capture_main_roi_found:
+            messagebox.showerror("Error", "Please capture the main region of interest first")
+            return
+        
+        if not min_colormap_value_field_selected:
+            messagebox.showerror("Error", "Please select the colormap min value field first")
+            return
+        
+        if not max_colormap_value_field_selected:
+            messagebox.showerror("Error", "Please select the colormap max value field first")
+            return
+
         if not self.project.metadata.get('sa_type'):
             messagebox.showerror("Error", "Please select an SA type and generate samples")
             return
-        
-        sa_type = self.project.metadata['sa_type']
-        num_params = len(self.project.metadata['params'])
-        if sa_type == 'Local Gradient Calculation' and num_params < 1:
-            messagebox.showerror("Error", "Local Gradient Calculation requires at least 1 parameter")
-            return
-        elif sa_type == 'Sobol (SALib)' and num_params < 2:
-            messagebox.showerror("Error", "Sobol SA requires at least 2 parameters")
-            return
-        
+                
+        # If everything looks good, initialize results and start replay
         self.project.metadata['status'] = "In progress"
         self.project.results = np.array([[np.nan, np.nan, np.nan, np.nan, np.nan]] * len(self.project.samples))
         self.project.save()
 
-        self.root.iconify()  # Hide window, will appear if Esc is pressed
+        self.root.iconify()  # Hide window, will appear if Home is pressed
         self.replay_paused = False  # Start running immediately
         self.replay_stop_requested = False
         self._start_replay_keyboard_listener()
@@ -1201,7 +1241,7 @@ class MainApp:
                     i += 1
                     continue
                 
-                self.cleanup_partial_roi_files()
+                self.cleanup_partial_simulation_run_results()
                 
                 while self.replay_paused:
                     if self.replay_stop_requested: return
@@ -1211,15 +1251,15 @@ class MainApp:
                 try:
                     replayer.execute_run(cmd_file, param_dict, self.vision_engine, template_path, self.project, i, should_pause_fn=lambda: self.replay_paused, should_stop_fn=lambda: self.replay_stop_requested)
                 except StopRequested:
-                    self.cleanup_partial_roi_files()
+                    self.cleanup_partial_simulation_run_results()
                     return  # Exit immediately on stop
                 except TimeoutError as e:
-                    self.cleanup_partial_roi_files()
+                    self.cleanup_partial_simulation_run_results()
                     self.replay_paused = True
                     self.root.after(0, lambda: self._show_timeout_error(str(e)))
                     continue  # Do not advance index! Retry it after user resumes.
                 except PauseRequested:
-                    self.cleanup_partial_roi_files()
+                    self.cleanup_partial_simulation_run_results()
                     self.replay_paused = True
                     self.root.after(0, self._show_replay_paused_ui)
                     continue  # Do not advance index! Retry it after user resumes.
@@ -1243,6 +1283,7 @@ class MainApp:
 
                 print(f"start_replay: Project results [{i}] = {self.project.results[i]}")
 
+                self.project.metadata['n_completed'] += 1
                 self.project.save()
                 i += 1
 

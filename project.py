@@ -8,11 +8,12 @@ class Project:
         self.metadata = {
             "name": "New Project",
             "status": "Setup", # setup, in progress, completed
-            "params": {}, # {name: {"min": 0, "max": 1}}
+            "params": {},
             "sa_type": None,
             "sa_params": {},
             "colormap": {"name": "viridis"},
             "additional_roi_status": "not capturing",
+            "n_completed": 0,
             "n_required": 0,
             "completion_roi": None
         }
@@ -34,7 +35,7 @@ class Project:
             with open(os.path.join(self.folder_path, "metadata.json"), "r") as f:
                 self.metadata = json.load(f)
             
-            # Request 10: Detect additional_roi_status from commands.txt
+            # Detect additional_roi_status from commands.txt
             cmd_file = os.path.join(self.folder_path, "commands.txt")
             if os.path.exists(cmd_file):
                 with open(cmd_file, "r") as f:
@@ -51,9 +52,9 @@ class Project:
                         self.metadata["additional_roi_status"] = "not capturing"
             
             if os.path.exists(os.path.join(self.folder_path, "samples.npy")):
-                self.samples = np.load(os.path.join(self.folder_path, "samples.npy")).tolist()
+                self.samples = np.load(os.path.join(self.folder_path, "samples.npy"))
             if os.path.exists(os.path.join(self.folder_path, "results.npy")):
-                self.results = np.load(os.path.join(self.folder_path, "results.npy")).tolist()
+                self.results = np.load(os.path.join(self.folder_path, "results.npy"))
             return True
         except Exception:
             return False
@@ -73,7 +74,7 @@ class Project:
         target = "capture additional region of interest"
         with open(cmd_file, "w") as f:
             for line in lines:
-                clean_line = line.strip().replace("# ", "")
+                clean_line = line.strip().replace("#", "").strip()
                 if clean_line == target:
                     f.write(f"{target}\n" if enable else f"# {target}\n")
                 else:
