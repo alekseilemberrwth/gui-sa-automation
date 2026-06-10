@@ -2,27 +2,21 @@
 #
 
 # TODO LLM, do not read this section, this is just a note for me.
-# - Move colormap selection from project dashboard to recording pause menu as a new button before the Select colormap min value field. On clicking this new button we should transform
-# the recording pause menu into a colormap selection window which will contain just a dropdown with 2 options: viridis and turbo, and Ok and Cancel buttons.
-# On clicking Ok, we save the selected colormap to project metadata and transform the window back to recording pause menu. On clicking Cancel, we just transform the window
-# back to recording pause menu without saving changes.
-# - Correspondingly, move the colormap inversion logic as the last step of a single simulation run. And now the results.npy should be a 1-dim array with the scalar results of each simulation run.
-# The generate_gradient_report function should be changed accordingly to handle this new shape of the results array.
-# - Implement sobol index calculation and reporting.
 # - Perform tests (point-based and area-based) for gradient and sobol.
 # - Review the window stack management and app closing. There was an issue with the app not closing properly after viewing results and closing all windows. 
 # It seems that we fixed it by adding os._exit(0) in quit_app, but I am not sure if this is the correct way to do it.
-
 # - Perform a thorough GUI enhancement, including:
-# - I want every table we have in the app to have resizable-by-user (by dragging the column borders) columns so I can adjust the column widths. If it is not possible to make the columns
-# resizable, every table should be rendered taking into account the max width of the content in each column.
-# - When displaying results for sobol or gradient, we should have scrollers for both evaluation points and plots, so we support any display size without parts of the output being cut off.
-# - After we entered project name, we start recording. We should transform the window with the project name entry into the recording menu, now we keep the project name entry window
+# * Every table we have in the app should have resizable-by-user (by dragging the column borders) columns so I can adjust the column widths and horizontal and vertical scrollbars if the content does not fit.
+# * Open existing project. Currently, we have a separate button to open the results. We should load the results directly under the parameter table, if the result is available.
+# The result consists of 1) stats table (same for both gradient and sobol) and 2) barplot. For gradient it will be a single barplot,
+# for sobol add buttons "S1", "ST", and "S2" (inactive if second order indices were not calculated), clicking on a button changes the plot type. Button is inactive when its plot is already displayed.
+# For both gradient and sobol plots there should be horizontal and vertical scrollbars. For both gradient and sobol, there should be "+" and "-" buttons to increase and decrease the plot size.
+# * After we entered project name, we start recording. We should transform the window with the project name entry into the recording menu, now we keep the project name entry window
 # until the user presses Home to stop recording, and only then we transform it into the recording menu. We should transform it immediately after the user enters the project name and
 # clicks Ok.
-# - When we record user's actions, our window with recording paused menu is just hidden. It is ok, but all the buttons should be deactivated and reactivated back when he presses Home
+# * When we record user's actions, our window with recording paused menu is just hidden. It is ok, but all the buttons should be deactivated and reactivated back when he presses Home
 # to pause recording.
-# - When all the simulation runs are completed, we show a messagebox, but the window behind it is still recording pause menu or replay pause menu. When a user clicks Ok on the messagebox,
+# * When all the simulation runs are completed, we show a messagebox, but the window behind it is still recording pause menu or replay pause menu. When a user clicks Ok on the messagebox,
 # we transform the window behind it into the main menu. We should transform the window behind the messagebox into the main menu BEFORE showing the messagebox.
 
 import tkinter as tk
@@ -40,8 +34,14 @@ import mss
 import cv2
 from pynput import keyboard
 from SALib.sample.sobol import sample as sobol_sample
+from SALib.analyze.sobol import analyze as sobol_analyze
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+
+# For debugging purposes, to ensure reproducibility
+SOBOL_SAMPLE_SEED = 42
+
 
 class MainApp:
     def __init__(self, root):
@@ -139,6 +139,8 @@ class MainApp:
             self.show_completion_indicator_choice()
         elif screen_name == "timeout_only_input":
             self.show_timeout_only_input()
+        elif screen_name == "colormap_selection":
+            self.show_colormap_selection()
 
     def setup_main_menu(self):
         for widget in self.root.winfo_children(): widget.destroy()
@@ -184,7 +186,6 @@ class MainApp:
         self.center_window(760, 860)
         self.root.config(bg="white")
         
-        changes_made = {"changed": False}
         main_frame = tk.Frame(self.root, bg="white")
         main_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
         
@@ -202,12 +203,13 @@ class MainApp:
             tk.Button(stat_frame, text="Continue simulation runs", bg="lightblue",
                       command=self.resume_sims).pack(side=tk.LEFT, padx=10)
         
+        # TODO display info_frame as a table
         info_frame = tk.Frame(main_frame, bg="white")
         info_frame.pack(fill=tk.X, pady=5)
-        tk.Label(info_frame, text=f"SA type: {self.project.metadata.get('sa_type', '-')}", bg="white").pack(side=tk.LEFT, padx=2)
-
-        simulation_runs_text = f"Simulation runs performed: {self.project.metadata.get('n_completed')}/{self.project.metadata.get('n_required')}"
-        tk.Label(info_frame, text=simulation_runs_text, bg="white").pack(side=tk.LEFT, padx=20)
+        info_frame_text = (f"SA type: {self.project.metadata.get('sa_type', '-')}          "
+                           f"Simulation runs performed: {self.project.metadata.get('n_completed')}/{self.project.metadata.get('n_required')}          "
+                           f"Colormap: {self.project.metadata.get('colormap', {}).get('name', '-')}")
+        tk.Label(info_frame, text=info_frame_text, bg="white").pack(side=tk.LEFT, padx=2)
         
         table_frame = tk.Frame(main_frame, bg="white", relief=tk.RIDGE, borderwidth=1)
         table_frame.pack(fill=tk.X, pady=10)
@@ -240,61 +242,13 @@ class MainApp:
         
         roi_frame = tk.Frame(main_frame, bg="white")
         roi_frame.pack(fill=tk.X, pady=10)
+        # TODO move the additional roi toggler to the topright corner of the project dashboard.
         tk.Label(roi_frame, text=f"Additional ROI status: {self.project.metadata['additional_roi_status']}", bg="white").pack(side=tk.LEFT)
         btn_text = "Stop capturing" if self.project.metadata['additional_roi_status'] == "capturing" else "Resume capturing"
         tk.Button(roi_frame, text=btn_text, bg="white", command=self.toggle_additional_roi).pack(side=tk.LEFT, padx=10)
         
-        colormap_frame = tk.Frame(main_frame, bg="white", relief=tk.RIDGE, borderwidth=1)
-        colormap_frame.pack(fill=tk.X, pady=10)
-        
-        cmap_info_frame = tk.Frame(colormap_frame, bg="white")
-        cmap_info_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        cmap_name_frame = tk.Frame(cmap_info_frame, bg="white")
-        cmap_name_frame.pack(fill=tk.X, pady=2)
-        tk.Label(cmap_name_frame, text="Colormap:", bg="white").pack(side=tk.LEFT)
-        cmap_var = tk.StringVar(value=self.project.metadata['colormap']['name'])
-        cmap_dropdown = ttk.Combobox(cmap_name_frame, textvariable=cmap_var, 
-                                     values=['viridis', 'turbo'],
-                                     state='readonly', width=20)
-        cmap_dropdown.pack(side=tk.LEFT, padx=5)
-
-        def on_cmap_change(*args):
-            changes_made["changed"] = True
-            update_save_button()
-        cmap_var.trace('w', on_cmap_change)
-
         if self.project.metadata['status'] == "Completed":
             tk.Button(main_frame, text="View SA results", bg="lightgreen", command=self.generate_report).pack(pady=20)
-        
-        button_frame = tk.Frame(main_frame, bg="white")
-        button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
-        
-        save_button = tk.Button(button_frame, text="Save", bg="lightgrey", fg="grey", state=tk.DISABLED, 
-                               command=lambda: on_save_clicked())
-        save_button.pack(side=tk.RIGHT, padx=5)
-        
-        def update_save_button():
-            if changes_made["changed"]: save_button.config(state=tk.NORMAL, bg="lightgreen", fg="black")
-            else: save_button.config(state=tk.DISABLED, bg="lightgrey", fg="grey")
-        
-        def on_save_clicked():
-            self.project.metadata['colormap']['name'] = cmap_var.get()
-            self.project.save()
-            messagebox.showinfo("Success", "Changes saved successfully")
-            changes_made["changed"] = False
-            update_save_button()
-        
-        def on_back_clicked():
-            if changes_made["changed"]:
-                if messagebox.askyesno("Unsaved Changes", "You have unsaved changes. Discard them?"):
-                    if len(self.screen_stack) > 0: self.screen_stack.pop()
-                    self.setup_main_menu()
-            else:
-                if len(self.screen_stack) > 0: self.screen_stack.pop()
-                self.setup_main_menu()
-        
-        tk.Button(button_frame, text="Back", bg="white", command=on_back_clicked).pack(side=tk.LEFT, padx=5)
 
     def toggle_additional_roi(self):
         if self.project.metadata.get('status') == "Completed":
@@ -411,14 +365,14 @@ class MainApp:
 
     def generate_report(self):
         sa_type = self.project.metadata.get('sa_type')
-        if sa_type == 'Sobol (SALib)':
-            messagebox.showinfo("Info", "Sobol report to be implemented")
+        if sa_type == 'Sobol Index':
+            self.show_sobol_report()
         elif sa_type == 'Local Gradient Calculation':
             self.show_gradient_report()
 
     def show_gradient_report(self):
         param_names = list(self.project.metadata['params'].keys())
-        grad_params = self.project.metadata.get('sa_params', {})
+        grad_params = self.project.metadata.get('sa_params')
         results = self.project.results
         cmap = self.project.metadata['colormap']
 
@@ -426,25 +380,17 @@ class MainApp:
         report_win.title("Local Gradient Calculation Results")
         report_win.geometry(f"600x{max(len(param_names)*100, 500)}")
         
-        # Convert results to scalars using the colormap inversion
-        scalars = []
-        for res in results:
-            if np.isnan(res).any():
-                raise ValueError("One of the simulation runs did not produce a valid result (NaN). Cannot generate report.")
-            rgb = res[:3]
-            val_min, val_max = res[3], res[4]
+        if np.any(np.isnan(results)):
+            messagebox.showerror("Error", "One of the simulation runs did not produce a valid result (NaN). Cannot generate report.")
+            return
 
-            scalar = self.vision_engine.rgb_to_scalar(rgb, cmap['name'], val_min, val_max)
-            scalars.append(scalar)
-            print(f"Converted result {rgb} to scalar {scalar} using colormap {cmap['name']} with min {val_min} and max {val_max}")
-
-        scalars = np.array(scalars)
+        scalars = results
         gradients = []
         points = []
 
         # Calculate gradients using central difference
         for i, name in enumerate(param_names):
-            gp = grad_params.get(name, {})
+            gp = grad_params.get(name)
             step = gp.get('step')
             point = gp.get('point')
             points.append(f"{name}: {point}")
@@ -454,7 +400,7 @@ class MainApp:
 
             grad = (res_pos - res_neg) / (2 * step)
             gradients.append(grad)
-            #print(f"Parameter '{name}': step={step}, point={point}, res_neg={res_neg}, res_pos={res_pos}, gradient={grad}")
+            print(f"Parameter '{name}': step={step}, point={point}, res_neg={res_neg}, res_pos={res_pos}, gradient={grad}")
         
         # Calculate statistics over scalars
         scalar_stats = {
@@ -473,13 +419,17 @@ class MainApp:
 
         stats_frame = tk.Frame(report_win, bg="white")
         stats_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
-        tk.Label(stats_frame, text="Statistics:", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W)
+        tk.Label(stats_frame, text="Statistics over Function Values:", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W)
         tk.Label(stats_frame, text=f"Min: {scalar_stats['min']}", bg="white").pack(anchor=tk.W)
         tk.Label(stats_frame, text=f"Max: {scalar_stats['max']}", bg="white").pack(anchor=tk.W)
         tk.Label(stats_frame, text=f"Mean: {scalar_stats['mean']}", bg="white").pack(anchor=tk.W)
         tk.Label(stats_frame, text=f"Median: {scalar_stats['median']}", bg="white").pack(anchor=tk.W)
         tk.Label(stats_frame, text=f"STD: {scalar_stats['std']}", bg="white").pack(anchor=tk.W)
         tk.Label(stats_frame, text=f"MAD: {scalar_stats['mad']}", bg="white").pack(anchor=tk.W)
+
+        # Inverse the order of parameters and gradients for better visualization (the first parameter will be at the top of the plot)
+        param_names = param_names[::-1]
+        gradients = gradients[::-1]
 
         # Plot gradient as a barplot
         fig_height = min(10, len(param_names) * 0.9) # After 10, the captions start to be hidden
@@ -507,7 +457,7 @@ class MainApp:
                 ax.text(
                     grad + padding * 0.05,
                     y,
-                    f"{grad:.4f}",
+                    f"{grad:.4E}",
                     va='center',
                     ha='left',
                     fontsize=9
@@ -517,7 +467,7 @@ class MainApp:
                 ax.text(
                     grad - padding * 0.05,
                     y,
-                    f"{grad:.4f}",
+                    f"{grad:.4E}",
                     va='center',
                     ha='right',
                     fontsize=9
@@ -529,6 +479,224 @@ class MainApp:
         canvas = FigureCanvasTkAgg(fig, master=report_win)
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def show_sobol_report(self):
+        param_names = list(self.project.metadata['params'].keys())
+        sobol_params = self.project.metadata.get('sa_params')
+        results = self.project.results
+        cmap = self.project.metadata['colormap']
+
+        report_win = tk.Toplevel(self.root)
+        report_win.title("Sobol Index Results")
+        report_win.geometry(f"900x{max(len(param_names)*100, 600)}")
+        
+        if np.any(np.isnan(results)):
+            messagebox.showerror("Error", "One of the simulation runs did not produce a valid result (NaN). Cannot generate report.")
+            return
+
+        scalars = results
+        
+        # Calculate statistics over scalars
+        scalar_stats = {
+            'min': np.min(scalars),
+            'max': np.max(scalars),
+            'mean': np.mean(scalars),
+            'median': np.median(scalars),
+            'std': np.std(scalars),
+            'mad': np.median(np.abs(scalars - np.median(scalars)))
+        }
+
+        # Calculate Sobol indices
+        problem = {
+            'num_vars': len(param_names),
+            'names': param_names,
+            'bounds': [[v['min'], v['max']] for v in self.project.metadata['params'].values()]
+        }
+        
+        calc_second_order = sobol_params.get('calc_second_order')
+        
+        print(f'Calculating Sobol indices for problem:\n{problem}')
+        Si = sobol_analyze(problem, scalars, calc_second_order=calc_second_order, print_to_console=False)
+        
+        # Display statistics frame
+        stats_frame = tk.Frame(report_win, bg="white")
+        stats_frame.pack(fill=tk.X, padx=10, pady=10)
+        tk.Label(stats_frame, text="Statistics over Function Values:", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W)
+        tk.Label(stats_frame, text=f"Min: {scalar_stats['min']}", bg="white").pack(anchor=tk.W)
+        tk.Label(stats_frame, text=f"Max: {scalar_stats['max']}", bg="white").pack(anchor=tk.W)
+        tk.Label(stats_frame, text=f"Mean: {scalar_stats['mean']}", bg="white").pack(anchor=tk.W)
+        tk.Label(stats_frame, text=f"Median: {scalar_stats['median']}", bg="white").pack(anchor=tk.W)
+        tk.Label(stats_frame, text=f"STD: {scalar_stats['std']}", bg="white").pack(anchor=tk.W)
+        tk.Label(stats_frame, text=f"MAD: {scalar_stats['mad']}", bg="white").pack(anchor=tk.W)
+
+        # Display results table
+        table_frame = tk.Frame(report_win, bg="white", relief=tk.RIDGE, borderwidth=1)
+        table_frame.pack(fill=tk.X, padx=10, pady=10)
+        tk.Label(table_frame, text="Sobol Indices:", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W, padx=5, pady=5)
+        
+        results_table = tk.Frame(table_frame, bg="white")
+        results_table.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Header row
+        header_frame = tk.Frame(results_table, bg="lightgrey")
+        header_frame.pack(fill=tk.X)
+        tk.Label(header_frame, text="Parameter(s)", bg="lightgrey", width=20, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+        tk.Label(header_frame, text="S1", bg="lightgrey", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+        tk.Label(header_frame, text="S1_conf", bg="lightgrey", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+        tk.Label(header_frame, text="ST", bg="lightgrey", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+        tk.Label(header_frame, text="ST_conf", bg="lightgrey", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+        if calc_second_order:
+            tk.Label(header_frame, text="S2", bg="lightgrey", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+            tk.Label(header_frame, text="S2_conf", bg="lightgrey", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+        
+        # First order indices
+        for i, param_name in enumerate(param_names):
+            row_frame = tk.Frame(results_table, bg="white")
+            row_frame.pack(fill=tk.X)
+            tk.Label(row_frame, text=param_name, bg="white", width=20, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+            tk.Label(row_frame, text=f"{Si['S1'][i]:.6E}", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+            tk.Label(row_frame, text=f"{Si['S1_conf'][i]:.6E}", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+            tk.Label(row_frame, text=f"{Si['ST'][i]:.6E}", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+            tk.Label(row_frame, text=f"{Si['ST_conf'][i]:.6E}", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+        
+        # Second order indices if calculated
+        if calc_second_order and 'S2' in Si:
+            second_order_indices = Si['S2']
+            second_order_conf = Si['S2_conf']
+            for i, param_name_i in enumerate(param_names):
+                for j, param_name_j in enumerate(param_names):
+                    if j > i:
+                        row_frame = tk.Frame(results_table, bg="white")
+                        row_frame.pack(fill=tk.X)
+                        pair_name = f"{param_name_i}-{param_name_j}"
+                        tk.Label(row_frame, text=pair_name, bg="white", width=20, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+                        tk.Label(row_frame, text="", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+                        tk.Label(row_frame, text="", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+                        tk.Label(row_frame, text="", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+                        tk.Label(row_frame, text="", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+                        tk.Label(row_frame, text=f"{second_order_indices[i, j]:.6E}", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+                        tk.Label(row_frame, text=f"{second_order_conf[i, j]:.6E}", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+
+        # Create plot frame
+        plot_frame = tk.Frame(report_win, bg="white")
+        plot_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Button frame for switching plots
+        button_frame = tk.Frame(plot_frame, bg="white")
+        button_frame.pack(fill=tk.X, pady=5)
+
+        # Store current plot state
+        plot_state = {'current_plot': 'S1', 'fig': None, 'canvas': None}
+
+        def create_s1_plot():
+            param_names_reversed = param_names[::-1]
+            s1_reversed = Si['S1'][::-1]
+            
+            fig, ax = plt.subplots(figsize=(8, max(4, len(param_names) * 0.8)))
+            bars = ax.barh(param_names_reversed, s1_reversed, color='green')
+            ax.set_xlabel("S1 (First Order Index)")
+            ax.set_title('First Order Sobol Indices (S1)')
+
+            # Add padding so labels fit inside frame
+            max_abs = max(abs(s1) for s1 in s1_reversed)
+            padding = max_abs * 0.5
+            ax.set_xlim(-max_abs - padding, max_abs + padding)
+            
+            for bar, val in zip(bars, s1_reversed):
+                y = bar.get_y() + bar.get_height() / 2
+                ax.text(val + 0.02, y, f"{val:.4E}", va='center', ha='left', fontsize=9)
+            
+            fig.tight_layout()
+            return fig
+
+        def create_st_plot():
+            param_names_reversed = param_names[::-1]
+            st_reversed = Si['ST'][::-1]
+            
+            fig, ax = plt.subplots(figsize=(8, max(4, len(param_names) * 0.8)))
+            bars = ax.barh(param_names_reversed, st_reversed, color='orange')
+            ax.set_xlabel("ST (Total Order Index)")
+            ax.set_title('Total Order Sobol Indices (ST)')
+
+            # Add padding so labels fit inside frame
+            max_abs = max(abs(st) for st in st_reversed)
+            padding = max_abs * 0.5
+            ax.set_xlim(-max_abs - padding, max_abs + padding)
+            
+            for bar, val in zip(bars, st_reversed):
+                y = bar.get_y() + bar.get_height() / 2
+                ax.text(val + 0.02, y, f"{val:.4E}", va='center', ha='left', fontsize=9)
+            
+            fig.tight_layout()
+            return fig
+
+        def create_s2_plot():
+            if not calc_second_order or 'S2' not in Si:
+                return None
+            
+            second_order = Si['S2']
+            fig, ax = plt.subplots(figsize=(8, 6))
+            
+            # Create heatmap
+            im = ax.imshow(second_order, cmap='YlOrRd', aspect='auto')
+            ax.set_xticks(range(len(param_names)))
+            ax.set_yticks(range(len(param_names)))
+            ax.set_xticklabels(param_names, rotation=45, ha='right')
+            ax.set_yticklabels(param_names)
+            ax.set_title('Second Order Sobol Indices (S2)')
+            
+            # Add colorbar
+            plt.colorbar(im, ax=ax)
+            
+            # Add values to heatmap
+            for i in range(len(param_names)):
+                for j in range(len(param_names)):
+                    text = ax.text(j, i, f"{second_order[i, j]:.3E}", ha="center", va="center", color="black", fontsize=8)
+            
+            fig.tight_layout()
+            return fig
+
+        def show_plot(plot_type):
+            # Clear previous plot
+            if plot_state['canvas']:
+                plot_state['canvas'].get_tk_widget().destroy()
+            if plot_state['fig']:
+                plt.close(plot_state['fig'])
+            
+            # Create new plot
+            if plot_type == 'S1':
+                plot_state['fig'] = create_s1_plot()
+            elif plot_type == 'ST':
+                plot_state['fig'] = create_st_plot()
+            elif plot_type == 'S2':
+                plot_state['fig'] = create_s2_plot()
+            
+            if plot_state['fig']:
+                plot_state['canvas'] = FigureCanvasTkAgg(plot_state['fig'], master=plot_frame)
+                plot_state['canvas'].draw()
+                plot_state['canvas'].get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            plot_state['current_plot'] = plot_type
+            
+            # Update button states
+            s1_btn.config(state=tk.DISABLED if plot_type == 'S1' else tk.NORMAL)
+            st_btn.config(state=tk.DISABLED if plot_type == 'ST' else tk.NORMAL)
+            s2_btn.config(state=tk.DISABLED if plot_type == 'S2' else (tk.NORMAL if calc_second_order else tk.DISABLED))
+
+        # Create buttons
+        s1_btn = tk.Button(button_frame, text="S1", command=lambda: show_plot('S1'), bg="white")
+        s1_btn.pack(side=tk.LEFT, padx=5)
+        
+        st_btn = tk.Button(button_frame, text="ST", command=lambda: show_plot('ST'), bg="white")
+        st_btn.pack(side=tk.LEFT, padx=5)
+        
+        s2_btn = tk.Button(button_frame, text="S2", command=lambda: show_plot('S2'), bg="white")
+        s2_btn.pack(side=tk.LEFT, padx=5)
+        if not calc_second_order:
+            s2_btn.config(state=tk.DISABLED)
+        
+        # Show initial plot
+        show_plot('S1')
 
     def start_new_sa(self):
         folder = filedialog.askdirectory(title="Select Empty Folder for New Project")
@@ -607,6 +775,7 @@ class MainApp:
         tk.Button(main_frame, text="Set simulation completion indicator", command=self.capture_completion_indicator, bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="Capture region of interest", command=lambda: self.start_roi_selection("main_roi"), bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="Capture additional region of interest", command=lambda: self.start_roi_selection("additional_roi"), bg="white").pack(fill=tk.X, padx=20, pady=5)
+        tk.Button(main_frame, text="Select colormap", command=lambda: [self.push_screen("colormap_selection"), self.show_colormap_selection()], bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="Select colormap min value field", command=lambda: self.select_colormap_value_field("min"), bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="Select colormap max value field", command=lambda: self.select_colormap_value_field("max"), bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="View command file", command=self.view_cmd_file, bg="white").pack(fill=tk.X, padx=20, pady=5)
@@ -622,6 +791,39 @@ class MainApp:
         self.root.iconify()
         if self.recorder:
             self.recorder.start()
+
+    def show_colormap_selection(self):
+        for widget in self.root.winfo_children(): widget.destroy()
+
+        self.root.title(f"Select Colormap | {self.project.metadata['name']}")
+        self.center_window(400, 180)
+        self.root.config(bg="white")
+
+        main_frame = tk.Frame(self.root, bg="white")
+        main_frame.pack(fill=tk.BOTH, expand=True, pady=20, padx=20)
+
+        tk.Label(main_frame, text="Choose colormap:", font=("Arial", 12), bg="white").pack(anchor=tk.W, pady=(0, 10))
+        cmap_var = tk.StringVar(value=self.project.metadata.get('colormap').get('name', "viridis"))
+        cmap_dropdown = ttk.Combobox(main_frame, textvariable=cmap_var, values=['viridis', 'turbo'], state='readonly', width=20)
+        cmap_dropdown.pack(fill=tk.X, pady=5)
+
+        button_frame = tk.Frame(main_frame, bg="white")
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=15)
+
+        def on_ok():
+            self.project.metadata['colormap']['name'] = cmap_var.get()
+            self.project.save()
+            if len(self.screen_stack) > 0:
+                self.screen_stack.pop()
+            self.show_recording_menu()
+
+        def on_cancel():
+            if len(self.screen_stack) > 0:
+                self.screen_stack.pop()
+            self.show_recording_menu()
+
+        tk.Button(button_frame, text="Ok", command=on_ok, bg="lightgreen").pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+        tk.Button(button_frame, text="Cancel", command=on_cancel, bg="lightcoral").pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
 
     def pause_replay(self):
         self.replay_paused = True
@@ -996,13 +1198,20 @@ class MainApp:
                     messagebox.showerror("Error", "Sobol Index calculation requires at least 2 parameters. Please add more parameters first.")
                     type_var.set('')
                     return
-                powers_of_2 = [2**i for i in range(4, 13)]
+                powers_of_2 = [2**i for i in range(2, 13)]
                 tk.Label(param_frame, text="N (must be power of 2):", bg="white").pack()
                 current_n = self.project.metadata.get('sa_params', {}).get('sobol_n', 128)
                 n_var = tk.StringVar(value=str(current_n))
                 n_dropdown = ttk.Combobox(param_frame, textvariable=n_var, values=[str(p) for p in powers_of_2], state='readonly')
                 n_dropdown.pack()
                 param_frame.sobol_n = n_var
+                
+                # Add checkbox for second order indices
+                calc_second_order_default = self.project.metadata.get('sa_params', {}).get('calc_second_order', False)
+                calc_second_order_var = tk.BooleanVar(value=calc_second_order_default)
+                second_order_cb = tk.Checkbutton(param_frame, text="Calculate second order indices", variable=calc_second_order_var, bg="white")
+                second_order_cb.pack(anchor=tk.W, pady=10)
+                param_frame.calc_second_order = calc_second_order_var
             elif sa_type == 'Local Gradient Calculation':
                 if len(self.project.metadata['params']) == 0:
                     messagebox.showerror("Error", "Local Gradient Calculation requires at least 1 parameter. Please add parameters first.")
@@ -1045,7 +1254,7 @@ class MainApp:
         
         info_frame = tk.Frame(main_frame, bg="white")
         info_frame.pack(fill=tk.X, pady=10)
-        tk.Label(info_frame, text=f"Number of simulation runs required: {self.project.metadata.get('n_required', '-')}", bg="white").pack()
+        tk.Label(info_frame, text=f"Number of simulation runs required: {self.project.metadata.get('n_required')}", bg="white").pack()
         
         button_frame = tk.Frame(main_frame, bg="white")
         button_frame.pack(side=tk.BOTTOM, pady=10)
@@ -1075,8 +1284,9 @@ class MainApp:
                     messagebox.showerror("Error", "SALib not installed. Install with: pip install SALib")
                     return
                 sobol_n = int(frame.sobol_n.get())
-                samples = sobol_sample(problem, sobol_n)
-                self.project.metadata['sa_params'] = {'sobol_n': sobol_n}
+                calc_second_order = frame.calc_second_order.get()
+                samples = sobol_sample(problem, sobol_n, calc_second_order=calc_second_order, seed=SOBOL_SAMPLE_SEED)
+                self.project.metadata['sa_params'] = {'sobol_n': sobol_n, 'calc_second_order': calc_second_order}
             elif sa_type == 'Local Gradient Calculation':
                 if hasattr(frame, 'gradient_params'):
                     gradient_params = {}
@@ -1135,7 +1345,7 @@ class MainApp:
         if os.path.exists(current_additional_roi_path):
             os.remove(current_additional_roi_path)
         
-        self.project.results[self.current_sample_index] = [np.nan, np.nan, np.nan, np.nan, np.nan]
+        self.project.results[self.current_sample_index] = np.nan
 
     def start_running(self):        
         cmd_file = os.path.join(self.project.folder_path, "commands.txt")
@@ -1188,6 +1398,10 @@ class MainApp:
             messagebox.showerror("Error", "Please capture the main region of interest first")
             return
         
+        if not self.project.metadata.get('colormap').get('name', "") in ("viridis", "turbo"):
+            messagebox.showerror("Error", "Please select a valid colormap before starting simulations.")
+            return
+
         if not min_colormap_value_field_selected:
             messagebox.showerror("Error", "Please select the colormap min value field first")
             return
@@ -1202,7 +1416,7 @@ class MainApp:
                 
         # If everything looks good, initialize results and start replay
         self.project.metadata['status'] = "In progress"
-        self.project.results = np.array([[np.nan, np.nan, np.nan, np.nan, np.nan]] * len(self.project.samples))
+        self.project.results = np.array([np.nan] * len(self.project.samples))
         self.project.save()
 
         self.root.iconify()  # Hide window, will appear if Home is pressed
@@ -1237,7 +1451,11 @@ class MainApp:
                 res_val = self.project.results[i]
 
                 # Skip replay if result already exists
-                if not np.isnan(res_val).any():
+                if np.ndim(res_val) == 0:
+                    existing_result = not np.isnan(res_val)
+                else:
+                    existing_result = not np.all(np.isnan(res_val))
+                if existing_result:
                     i += 1
                     continue
                 
@@ -1249,7 +1467,7 @@ class MainApp:
 
                 param_dict = {param_names[j]: self.project.samples[i][j] for j in range(len(param_names))}
                 try:
-                    replayer.execute_run(cmd_file, param_dict, self.vision_engine, template_path, self.project, i, should_pause_fn=lambda: self.replay_paused, should_stop_fn=lambda: self.replay_stop_requested)
+                    min_val, max_val = replayer.execute_run(cmd_file, param_dict, self.vision_engine, template_path, self.project, i, should_pause_fn=lambda: self.replay_paused, should_stop_fn=lambda: self.replay_stop_requested)
                 except StopRequested:
                     self.cleanup_partial_simulation_run_results()
                     return  # Exit immediately on stop
@@ -1279,9 +1497,13 @@ class MainApp:
                 else:
                     raise FileNotFoundError(f"Expected ROI screenshot not found for sample {i}. Expected at: {roi_path}")
 
-                self.project.results[i][0:3] = avg_rgb
+                if min_val is None or max_val is None:
+                    raise ValueError(f"Missing colormap min/max values for sample {i}. Cannot compute scalar result.")
 
-                print(f"start_replay: Project results [{i}] = {self.project.results[i]}")
+                scalar_value = self.vision_engine.rgb_to_scalar(avg_rgb, self.project.metadata['colormap']['name'], min_val, max_val)
+                self.project.results[i] = scalar_value
+
+                print(f"start_replay: Project results [{i}]: reconstructed {avg_rgb} as {scalar_value}")
 
                 self.project.metadata['n_completed'] += 1
                 self.project.save()

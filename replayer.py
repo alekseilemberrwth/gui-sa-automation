@@ -65,6 +65,9 @@ class TextReplayer:
         with open(cmd_file, "r") as f:
             lines = f.readlines()
 
+        min_value = None
+        max_value = None
+
         for line in lines:
             cmd = line.strip()
             if not cmd or cmd.startswith("#"):
@@ -125,13 +128,14 @@ class TextReplayer:
                     raise ValueError(f"Invalid clipboard value for '{cmd}': {value_str}")
 
                 if cmd.endswith("min value field"):
-                    project.results[sample_index][3] = value
+                    min_value = value
                 else:
-                    project.results[sample_index][4] = value
+                    max_value = value
                 
                 #print(f"execute_run: '{cmd}'")
                 #print(f"execute_run: Project results [{sample_index}] = {project.results[sample_index]}")
 
+                
             elif cmd == "capture the region of interest":
                 if project and 'main_roi' in project.metadata:
                     coords = project.metadata['main_roi']
@@ -149,3 +153,5 @@ class TextReplayer:
 
             self._check_stop(should_stop_fn)
             self._check_pause(should_pause_fn)
+
+        return min_value, max_value

@@ -11,13 +11,13 @@ class Project:
             "params": {},
             "sa_type": None,
             "sa_params": {},
-            "colormap": {"name": "viridis"},
+            "colormap": {},
             "additional_roi_status": "not capturing",
             "n_completed": 0,
-            "n_required": 0,
+            "n_required": "-",
             "completion_roi": None
         }
-        self.results = np.array([[]])
+        self.results = np.array([])
         self.samples = np.array([[]])
 
     def save(self):
