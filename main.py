@@ -1,8 +1,7 @@
 # BUG LLM, do not read this section, this is just a note for me.
-#
+# When I change parameter name from X to Y, I want to replace every instance of "enter value for X" to "enter value for Y" in the command file
 
 # TODO LLM, do not read this section, this is just a note for me.
-# - Perform tests (point-based and area-based) for gradient and sobol.
 # - Review the window stack management and app closing. There was an issue with the app not closing properly after viewing results and closing all windows. 
 # It seems that we fixed it by adding os._exit(0) in quit_app, but I am not sure if this is the correct way to do it.
 # - Perform a thorough GUI enhancement, including:
@@ -23,6 +22,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import os
 import threading
+import sys
 from project import Project
 from recorder import TextRecorder
 from replayer import TextReplayer, PauseRequested, StopRequested
@@ -36,11 +36,358 @@ from pynput import keyboard
 from SALib.sample.sobol import sample as sobol_sample
 from SALib.analyze.sobol import analyze as sobol_analyze
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 
 # For debugging purposes, to ensure reproducibility
 SOBOL_SAMPLE_SEED = 42
+
+class EditableTreeview(ttk.Frame):
+    def __init__(self, parent, columns, editable_cols=None, tree_height=10, *args, **kwargs):
+        super().__init__(parent, *args, **kwargs)
+        self.editable_cols = editable_cols or []
+        self.editor = None
+        self.editing_item = None
+        self.editing_column = None
+
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+
+        self.tree = ttk.Treeview(self, columns=columns, show="headings", height=tree_height)
+        for col in columns:
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=150, minwidth=60, stretch=False)
+
+        self.v_scroll = ttk.Scrollbar(self, orient="vertical", command=self.on_vertical_scroll)
+        self.h_scroll = ttk.Scrollbar(self, orient="horizontal", command=self.on_horizontal_scroll)
+        self.tree.configure(yscrollcommand=self.v_scroll.set, xscrollcommand=self.h_scroll.set)
+
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        self.v_scroll.grid(row=0, column=1, sticky="ns")
+        self.h_scroll.grid(row=1, column=0, sticky="ew")
+
+        self.tree.bind("<Button-1>", self.on_click)
+        self.tree.bind("<MouseWheel>", self.on_mousewheel)
+
+    def populate(self, data):
+        self.tree.delete(*self.tree.get_children())
+        for row in data:
+            self.tree.insert("", "end", values=row)
+
+    def get_data(self):
+        return [list(self.tree.item(child)["values"]) for child in self.tree.get_children()]
+
+    def delete_selected(self):
+        for item in self.tree.selection():
+            self.tree.delete(item)
+
+    def on_click(self, event):
+        self.commit_editor()
+        region = self.tree.identify("region", event.x, event.y)
+        if region != "cell": return
+        
+        item = self.tree.identify_row(event.y)
+        if not item: return
+        self.tree.selection_set(item)
+        
+        column = self.tree.identify_column(event.x)
+        col_index = int(column[1:]) - 1
+
+        if col_index not in self.editable_cols: return
+
+        x, y, width, height = self.tree.bbox(item, column)
+        value = self.tree.set(item, column)
+
+        self.editor = ttk.Entry(self.tree)
+        self.editor.insert(0, value)
+        self.editor.place(x=x, y=y, width=width, height=height)
+        self.editor.focus_set()
+
+        self.editing_item = item
+        self.editing_column = column
+
+        self.editor.bind("<Return>", lambda e: self.commit_editor())
+        self.editor.bind("<Escape>", lambda e: self.cancel_editor())
+
+    def commit_editor(self):
+        if self.editor is None: return
+        value = self.editor.get()
+        self.tree.set(self.editing_item, self.editing_column, value)
+        self.editor.destroy()
+        self.editor = None
+        self.editing_item = None
+        self.editing_column = None
+
+    def cancel_editor(self):
+        if self.editor is None: return
+        self.editor.destroy()
+        self.editor = None
+        self.editing_item = None
+        self.editing_column = None
+
+    def on_vertical_scroll(self, *args):
+        self.commit_editor()
+        self.tree.yview(*args)
+
+    def on_horizontal_scroll(self, *args):
+        self.commit_editor()
+        self.tree.xview(*args)
+
+    def on_mousewheel(self, event):
+        self.commit_editor()
+        self.tree.yview_scroll(-event.delta // 120, "units")
+        return "break"
+
+
+class SAViewer(ttk.Frame):
+    def __init__(self, parent, project, *args, **kwargs):
+        super().__init__(parent, *args, **kwargs)
+        self.project = project
+        self.zoom_factor = 1.0
+        self.param_names = list(self.project.metadata['params'].keys())
+        self.sa_type = self.project.metadata.get('sa_type')
+
+        self.fig = Figure(figsize=(6, 4), dpi=100)
+        self.ax = None
+        self.stats = {}
+
+        self.analyze_results()
+
+        self.current_plot = 'Gradient' if self.sa_type == 'Local Gradient Calculation' else 'S1'
+        self.create_widgets()
+        self.draw_plot()
+
+        self.canvas.bind("<Configure>", lambda event: self.update_image_position())
+
+    def analyze_results(self):
+        scalars = self.project.results
+        self.stats = {
+            'Min': np.min(scalars), 'Max': np.max(scalars),
+            'Mean': np.mean(scalars), 'Median': np.median(scalars),
+            'STD': np.std(scalars), 'MAD': np.median(np.abs(scalars - np.median(scalars)))
+        }
+
+        if self.sa_type == 'Local Gradient Calculation':
+            self.gradients = []
+            grad_params = self.project.metadata.get('sa_params')
+            for i, name in enumerate(self.param_names):
+                step = grad_params.get(name).get('step')
+                res_neg = scalars[2*i]
+                res_pos = scalars[2*i + 1]
+                self.gradients.append((res_pos - res_neg) / (2 * step))
+        else:
+            problem = {
+                'num_vars': len(self.param_names),
+                'names': self.param_names,
+                'bounds': [[v['min'], v['max']] for v in self.project.metadata['params'].values()]
+            }
+            calc_second_order = self.project.metadata.get('sa_params', {}).get('calc_second_order', False)
+            self.Si = sobol_analyze(problem, scalars, calc_second_order=calc_second_order, print_to_console=False)
+
+    def create_widgets(self):
+        top_bar = ttk.Frame(self)
+        top_bar.pack(fill=tk.X, pady=5)
+
+        # Plot type buttons (only for Sobol)
+        if self.sa_type == 'Sobol Index':
+            btn_frame = ttk.Frame(top_bar)
+            btn_frame.pack(side=tk.LEFT)
+            self.s1_btn = tk.Button(btn_frame, text="S1", width=5, command=lambda: self.switch_plot("S1"))
+            self.s1_btn.pack(side=tk.LEFT, padx=2)
+            self.st_btn = tk.Button(btn_frame, text="ST", width=5, command=lambda: self.switch_plot("ST"))
+            self.st_btn.pack(side=tk.LEFT, padx=2)
+            self.s2_btn = tk.Button(btn_frame, text="S2", width=5, command=lambda: self.switch_plot("S2"))
+            self.s2_btn.pack(side=tk.LEFT, padx=2)
+            
+            calc_s2 = self.project.metadata.get('sa_params', {}).get('calc_second_order', False)
+            if not calc_s2:
+                self.s2_btn.config(state=tk.DISABLED)
+
+        # Zoom buttons
+        zoom_frame = ttk.Frame(top_bar)
+        zoom_frame.pack(side=tk.LEFT, padx=(20 if self.sa_type == 'Sobol Index' else 0))
+        ttk.Button(zoom_frame, text="+", width=3, command=self.zoom_in).pack(side=tk.LEFT, padx=2)
+        ttk.Button(zoom_frame, text="-", width=3, command=self.zoom_out).pack(side=tk.LEFT, padx=2)
+        ttk.Button(zoom_frame, text="Reset", command=self.zoom_reset).pack(side=tk.LEFT, padx=2)
+
+        # Canvas Frame
+        self.canvas_frame = ttk.Frame(self)
+        self.canvas_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.canvas_frame.rowconfigure(0, weight=1)
+        self.canvas_frame.columnconfigure(0, weight=1)
+
+        self.canvas = tk.Canvas(self.canvas_frame, bg="white")
+        self.v_scroll = ttk.Scrollbar(self.canvas_frame, orient="vertical", command=self.canvas.yview)
+        self.h_scroll = ttk.Scrollbar(self.canvas_frame, orient="horizontal", command=self.canvas.xview)
+
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.v_scroll.grid(row=0, column=1, sticky="ns")
+        self.h_scroll.grid(row=1, column=0, sticky="ew")
+
+        self.canvas.configure(yscrollcommand=self.v_scroll.set, xscrollcommand=self.h_scroll.set)
+        self.canvas.bind("<Motion>", self.on_hover)
+
+        self.update_buttons()
+
+    def update_buttons(self):
+        if self.sa_type != 'Sobol Index': return
+        self.s1_btn.config(state=tk.DISABLED if self.current_plot == 'S1' else tk.NORMAL)
+        self.st_btn.config(state=tk.DISABLED if self.current_plot == 'ST' else tk.NORMAL)
+        calc_s2 = self.project.metadata.get('sa_params', {}).get('calc_second_order', False)
+        if calc_s2:
+            self.s2_btn.config(state=tk.DISABLED if self.current_plot == 'S2' else tk.NORMAL)
+
+    def switch_plot(self, plot_type):
+        self.current_plot = plot_type
+        self.zoom_factor = 1.0
+        self.update_buttons()
+        self.draw_plot()
+
+    def draw_plot(self):
+        self.fig.clf()
+        self.ax = self.fig.add_subplot(111)
+        names = self.param_names[::-1]
+
+        if self.current_plot == 'Gradient':
+            vals = self.gradients[::-1]
+            colors = ['red' if v >= 0 else 'blue' for v in vals]
+            self.bars = self.ax.barh(names, vals, color=colors)
+            self.plot_values = vals
+            self.ax.set_title("Gradient Barplot")
+            self.ax.set_xlabel("Partial Derivative")
+            max_abs = max(abs(v) for v in vals) if vals else 1
+            self.ax.set_xlim(-max_abs * 1.15, max_abs * 1.15)
+            fig_width, fig_height = 6 * self.zoom_factor, max(2, len(names) * 0.3) * self.zoom_factor
+
+        elif self.current_plot in ('S1', 'ST'):
+            vals = self.Si[self.current_plot][::-1]
+            colors = ['green'] if self.current_plot == 'S1' else ['orange']
+            self.bars = self.ax.barh(names, vals, color=colors[0])
+            self.plot_values = vals
+            self.ax.set_title(f"{'First' if self.current_plot == 'S1' else 'Total'} Order Sobol Indices ({self.current_plot})")
+            self.ax.set_xlabel(f"{self.current_plot}")
+            max_abs = max(abs(v) for v in vals) if len(vals) > 0 else 1
+            self.ax.set_xlim(-max_abs * 1.15, max_abs * 1.15)
+            fig_width, fig_height = 6 * self.zoom_factor, max(2, len(names) * 0.3) * self.zoom_factor
+
+        elif self.current_plot == 'S2':
+            n = len(self.param_names)
+            s2_data = self.Si['S2']
+            self.plot_s2 = np.zeros((n, n))
+            self.annot_s2 = [["" for _ in range(n)] for _ in range(n)]
+            
+            for i in range(n):
+                for j in range(n):
+                    if i == j:
+                        self.plot_s2[i, j] = 0
+                        self.annot_s2[i][j] = "N/A"
+                    elif j > i:
+                        val = s2_data[i, j]
+                        self.plot_s2[i, j] = val
+                        self.plot_s2[j, i] = val
+                        self.annot_s2[i][j] = f"{val}"
+                        self.annot_s2[j][i] = f"{val}"
+                        
+            self.im = self.ax.imshow(self.plot_s2, cmap='bwr')
+            self.ax.set_xticks(range(n))
+            self.ax.set_yticks(range(n))
+            self.ax.set_xticklabels(self.param_names, rotation=45, ha='right')
+            self.ax.set_yticklabels(self.param_names)
+            self.ax.set_title("Second Order Sobol Indices (S2)")
+            fig_width, fig_height = max(5, len(names) * 0.8) * self.zoom_factor, max(4, len(names) * 0.8) * self.zoom_factor
+
+        self.annot = self.ax.annotate(
+            "", xy=(0, 0), xytext=(0, 0), textcoords="offset points",
+            ha='left', va='center', fontsize=9,
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.9)
+        )
+        self.annot.set_visible(False)
+
+        self.fig.set_size_inches(fig_width, fig_height)
+        self.fig.tight_layout()
+        self.render_canvas_image()
+
+    def render_canvas_image(self):
+        self.agg = FigureCanvasAgg(self.fig)
+        self.agg.draw()
+        self.img_width, self.img_height = self.agg.get_width_height()
+        image = Image.fromarray(np.asarray(self.agg.buffer_rgba()))
+        self.photo = ImageTk.PhotoImage(image)
+        self.update_image_position()
+        self.canvas.configure(scrollregion=(0, 0, self.img_width, self.img_height))
+
+    def update_image_position(self):
+        self.canvas.delete("all")
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        x = max(0, (canvas_width - self.img_width) // 2)
+        y = max(0, (canvas_height - self.img_height) // 2)
+        self.plot_offset_x = x
+        self.plot_offset_y = y
+        self.canvas.create_image(x, y, image=self.photo, anchor="nw")
+
+    def on_hover(self, event):
+        if not hasattr(self, 'agg'): return
+        canvas_scroll_x = self.canvas.canvasx(event.x)
+        canvas_scroll_y = self.canvas.canvasy(event.y)
+        img_x = canvas_scroll_x - self.plot_offset_x
+        img_y = canvas_scroll_y - self.plot_offset_y
+        mpl_y = self.img_height - img_y
+
+        class MockEvent:
+            def __init__(self, x, y, inaxes):
+                self.x, self.y, self.inaxes = x, y, inaxes
+
+        bbox = self.ax.get_window_extent()
+        inaxes = self.ax if bbox.contains(img_x, mpl_y) else None
+        mock_event = MockEvent(img_x, mpl_y, inaxes)
+
+        vis = self.annot.get_visible()
+        if mock_event.inaxes == self.ax:
+            if self.current_plot in ('Gradient', 'S1', 'ST'):
+                for bar, val in zip(self.bars, self.plot_values):
+                    cont, _ = bar.contains(mock_event)
+                    if cont:
+                        self.annot.xy = (0, bar.get_y() + bar.get_height() / 2)
+                        self.annot.set_text(f"{val}")
+                        self.annot.set_ha('left')
+                        self.annot.set_visible(True)
+                        if not vis: self.render_canvas_image()
+                        return
+            elif self.current_plot == 'S2':
+                inv = self.ax.transData.inverted()
+                x_data, y_data = inv.transform((mock_event.x, mock_event.y))
+                col, row = int(round(x_data)), int(round(y_data))
+                if 0 <= col < len(self.param_names) and 0 <= row < len(self.param_names):
+                    if self.annot_s2[row][col] != "N/A":
+                        self.annot.xy = (col, row)
+                        self.annot.set_text(self.annot_s2[row][col])
+                        self.annot.set_ha('center')
+                        self.annot.set_visible(True)
+                        if not vis: self.render_canvas_image()
+                        return
+                    else:
+                        if vis:
+                            self.annot.set_visible(False)
+                            self.render_canvas_image()
+                        return
+
+        if vis:
+            self.annot.set_visible(False)
+            self.render_canvas_image()
+
+    def zoom_in(self):
+        self.zoom_factor *= 1.2
+        self.draw_plot()
+
+    def zoom_out(self):
+        self.zoom_factor /= 1.2
+        self.draw_plot()
+
+    def zoom_reset(self):
+        self.zoom_factor = 1.0
+        self.draw_plot()
 
 
 class MainApp:
@@ -101,7 +448,6 @@ class MainApp:
             self.in_roi_preview = False
             self.show_recording_menu()
             return
-        
         self.go_back()
     
     def go_back(self):
@@ -116,8 +462,13 @@ class MainApp:
             self.quit_app()
 
     def quit_app(self):
+        self._stop_replay_keyboard_listener()
+        if self.recorder:
+            try: self.recorder.stop_and_save()
+            except: pass
+        self.root.quit()
         self.root.destroy()
-        os._exit(0)
+        sys.exit(0)
 
     def push_screen(self, screen_name, screen_data=None):
         self.screen_stack.append((screen_name, screen_data))
@@ -183,27 +534,38 @@ class MainApp:
         for widget in self.root.winfo_children(): widget.destroy()
         
         self.root.title(f"Project: {self.project.metadata['name']}")
-        self.center_window(760, 860)
+        self.center_window(1100, 900)
         self.root.config(bg="white")
         
         main_frame = tk.Frame(self.root, bg="white")
         main_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
+
+        # Top Bar containing Status and Additional ROI toggler
+        top_bar = tk.Frame(main_frame, bg="white")
+        top_bar.pack(fill=tk.X, pady=5)
         
         status_colors = {"Setup": "grey", "In progress": "orange", "Completed": "green"}
-        
-        stat_frame = tk.Frame(main_frame, bg="white")
-        stat_frame.pack(fill=tk.X, pady=5)
         status_color = status_colors.get(self.project.metadata['status'], 'black')
+
+        stat_frame = tk.Frame(top_bar, bg="white")
+        stat_frame.pack(side=tk.LEFT)
         tk.Label(stat_frame, text="Status:", font=("Arial", 10, "bold"), fg="black", bg="white").pack(side=tk.LEFT)
         tk.Label(stat_frame, text=self.project.metadata['status'], font=("Arial", 10, "bold"), fg=status_color, bg="white").pack(side=tk.LEFT)
+        
         if self.project.metadata['status'] == "Setup":
             tk.Button(stat_frame, text="Continue recording actions", bg="lightblue",
                       command=self.continue_recording_actions).pack(side=tk.LEFT, padx=10)
         elif self.project.metadata['status'] == "In progress":
             tk.Button(stat_frame, text="Continue simulation runs", bg="lightblue",
                       command=self.resume_sims).pack(side=tk.LEFT, padx=10)
+
+        roi_frame = tk.Frame(top_bar, bg="white")
+        roi_frame.pack(side=tk.RIGHT)
+        tk.Label(roi_frame, text=f"Additional ROI status: {self.project.metadata['additional_roi_status']}", bg="white").pack(side=tk.LEFT)
+        btn_text = "Stop capturing" if self.project.metadata['additional_roi_status'] == "capturing" else "Resume capturing"
+        tk.Button(roi_frame, text=btn_text, bg="white", command=self.toggle_additional_roi).pack(side=tk.LEFT, padx=10)
         
-        # TODO display info_frame as a table
+        # Info frame
         info_frame = tk.Frame(main_frame, bg="white")
         info_frame.pack(fill=tk.X, pady=5)
         info_frame_text = (f"SA type: {self.project.metadata.get('sa_type', '-')}          "
@@ -211,44 +573,44 @@ class MainApp:
                            f"Colormap: {self.project.metadata.get('colormap', {}).get('name', '-')}")
         tk.Label(info_frame, text=info_frame_text, bg="white").pack(side=tk.LEFT, padx=2)
         
+        # Parameter Table
         table_frame = tk.Frame(main_frame, bg="white", relief=tk.RIDGE, borderwidth=1)
         table_frame.pack(fill=tk.X, pady=10)
         tk.Label(table_frame, text="Parameter settings", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W, padx=5, pady=5)
         
-        param_table = tk.Frame(table_frame, bg="white")
-        param_table.pack(fill=tk.X, padx=5, pady=5)
-        
         sa_type = self.project.metadata.get('sa_type', '')
         headers = ["Name", "Range"]
         if sa_type == 'Local Gradient Calculation': headers += ["Point", "Step"]
-        widths = [18, 24, 14, 14]
-        header_row = tk.Frame(param_table, bg="lightgrey")
-        header_row.pack(fill=tk.X)
-        for idx, header in enumerate(headers):
-            tk.Label(header_row, text=header, bg="lightgrey", width=widths[idx], anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=3)
         
-        if len(self.project.metadata['params']) == 0:
-            tk.Label(param_table, text="No parameters defined.", bg="white").pack(padx=5, pady=5)
-        else:
-            for pname, bounds in self.project.metadata['params'].items():
-                row = tk.Frame(param_table, bg="white")
-                row.pack(fill=tk.X)
-                tk.Label(row, text=pname, bg="white", width=widths[0], anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-                tk.Label(row, text=f"[{bounds['min']}, {bounds['max']}]", bg="white", width=widths[1], anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-                if sa_type == 'Local Gradient Calculation':
-                    grad_params = self.project.metadata.get('sa_params', {}).get(pname, {})
-                    tk.Label(row, text=str(grad_params.get('point', '')), bg="white", width=widths[2], anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-                    tk.Label(row, text=str(grad_params.get('step', '')), bg="white", width=widths[3], anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
+        param_tree = EditableTreeview(table_frame, columns=headers, editable_cols=[], tree_height=min(10, max(3, len(self.project.metadata['params']))))
+        param_tree.pack(fill=tk.X, padx=5, pady=5)
         
-        roi_frame = tk.Frame(main_frame, bg="white")
-        roi_frame.pack(fill=tk.X, pady=10)
-        # TODO move the additional roi toggler to the topright corner of the project dashboard.
-        tk.Label(roi_frame, text=f"Additional ROI status: {self.project.metadata['additional_roi_status']}", bg="white").pack(side=tk.LEFT)
-        btn_text = "Stop capturing" if self.project.metadata['additional_roi_status'] == "capturing" else "Resume capturing"
-        tk.Button(roi_frame, text=btn_text, bg="white", command=self.toggle_additional_roi).pack(side=tk.LEFT, padx=10)
-        
+        data = []
+        for pname, bounds in self.project.metadata['params'].items():
+            row = [pname, f"[{bounds['min']}, {bounds['max']}]"]
+            if sa_type == 'Local Gradient Calculation':
+                grad_params = self.project.metadata.get('sa_params', {}).get(pname, {})
+                row.extend([grad_params.get('point', ''), grad_params.get('step', '')])
+            data.append(row)
+        param_tree.populate(data)
+
+        # Embedded Results
         if self.project.metadata['status'] == "Completed":
-            tk.Button(main_frame, text="View SA results", bg="lightgreen", command=self.generate_report).pack(pady=20)
+            if np.any(np.isnan(self.project.results)):
+                tk.Label(main_frame, text="Simulation runs contain NaN results. Cannot generate SA report.", fg="red", bg="white").pack(pady=10)
+            else:
+                res_frame = tk.Frame(main_frame, bg="white")
+                res_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+                tk.Label(res_frame, text="Sensitivity Analysis Results", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W, pady=(10, 5))
+
+                plot_viewer = SAViewer(res_frame, self.project)
+                
+                stats_tree = EditableTreeview(res_frame, columns=["Min", "Max", "Mean", "Median", "STD", "MAD"], editable_cols=[], tree_height=1)
+                stats_tree.pack(fill=tk.X, pady=(0, 5))
+                st = plot_viewer.stats
+                stats_tree.populate([[f"{st['Min']}", f"{st['Max']}", f"{st['Mean']}", f"{st['Median']}", f"{st['STD']}", f"{st['MAD']}"]])
+
+                plot_viewer.pack(fill=tk.BOTH, expand=True)
 
     def toggle_additional_roi(self):
         if self.project.metadata.get('status') == "Completed":
@@ -265,8 +627,8 @@ class MainApp:
 
     def resume_sims(self):
         if messagebox.askokcancel("Confirm", "Resume simulation running?"):
-            self.root.iconify()  # Hide window, will appear if Home is pressed
-            self.replay_paused = False  # Start running immediately
+            self.root.iconify()
+            self.replay_paused = False
             self.replay_stop_requested = False
             self._start_replay_keyboard_listener()
             self._replay_thread = threading.Thread(target=self.start_replay, daemon=True)
@@ -276,7 +638,6 @@ class MainApp:
         if prefix.startswith("roi_additional_"): folder = os.path.join(self.project.folder_path, "Additional ROIs")
         elif prefix.startswith("roi_main_"): folder = os.path.join(self.project.folder_path, "ROIs")
         else: folder = self.project.folder_path
-        
         if not os.path.exists(folder): return []
         return [f for f in os.listdir(folder) if f.startswith(prefix)]
 
@@ -294,7 +655,6 @@ class MainApp:
 
     def show_completion_indicator_choice(self):
         for widget in self.root.winfo_children(): widget.destroy()
-        
         self.root.title(f"Set Simulation Completion Indicator | {self.project.metadata['name']}")
         self.center_window(400, 125)
         self.root.config(bg="white")
@@ -320,7 +680,6 @@ class MainApp:
     
     def show_timeout_only_input(self):
         for widget in self.root.winfo_children(): widget.destroy()
-        
         self.root.title(f"Timeout Configuration | {self.project.metadata['name']}")
         self.center_window(400, 200)
         self.root.config(bg="white")
@@ -329,7 +688,6 @@ class MainApp:
         main_frame.pack(fill=tk.BOTH, expand=True, pady=20, padx=20)
         
         tk.Label(main_frame, text="Enter timeout in seconds:", font=("Arial", 11), bg="white").pack(pady=10)
-        
         timeout_var = tk.StringVar(value="10.0")
         timeout_entry = tk.Entry(main_frame, textvariable=timeout_var, font=("Arial", 12), bg="white")
         timeout_entry.pack(pady=10, fill=tk.X)
@@ -343,7 +701,6 @@ class MainApp:
                     return
                 cmd = f"wait for simulation to finish with timeout {timeout}"
                 self._add_unique_command(cmd, prefix="wait for simulation to finish")
-                # Delete any old completion templates since we are using pure timeout
                 for f in os.listdir(self.project.folder_path):
                     if f.startswith("simulation_completion_indicator"):
                         os.remove(os.path.join(self.project.folder_path, f))
@@ -363,341 +720,6 @@ class MainApp:
         
         timeout_entry.bind("<Return>", lambda e: on_confirm())
 
-    def generate_report(self):
-        sa_type = self.project.metadata.get('sa_type')
-        if sa_type == 'Sobol Index':
-            self.show_sobol_report()
-        elif sa_type == 'Local Gradient Calculation':
-            self.show_gradient_report()
-
-    def show_gradient_report(self):
-        param_names = list(self.project.metadata['params'].keys())
-        grad_params = self.project.metadata.get('sa_params')
-        results = self.project.results
-        cmap = self.project.metadata['colormap']
-
-        report_win = tk.Toplevel(self.root)
-        report_win.title("Local Gradient Calculation Results")
-        report_win.geometry(f"600x{max(len(param_names)*100, 500)}")
-        
-        if np.any(np.isnan(results)):
-            messagebox.showerror("Error", "One of the simulation runs did not produce a valid result (NaN). Cannot generate report.")
-            return
-
-        scalars = results
-        gradients = []
-        points = []
-
-        # Calculate gradients using central difference
-        for i, name in enumerate(param_names):
-            gp = grad_params.get(name)
-            step = gp.get('step')
-            point = gp.get('point')
-            points.append(f"{name}: {point}")
-            
-            res_neg = scalars[2*i]
-            res_pos = scalars[2*i + 1]
-
-            grad = (res_pos - res_neg) / (2 * step)
-            gradients.append(grad)
-            print(f"Parameter '{name}': step={step}, point={point}, res_neg={res_neg}, res_pos={res_pos}, gradient={grad}")
-        
-        # Calculate statistics over scalars
-        scalar_stats = {
-            'min': np.min(scalars),
-            'max': np.max(scalars),
-            'mean': np.mean(scalars),
-            'median': np.median(scalars),
-            'std': np.std(scalars),
-            'mad': np.median(np.abs(scalars - np.median(scalars))) # Median Absolute Deviation from the median
-        }
-
-        info_frame = tk.Frame(report_win, bg="white")
-        info_frame.pack(fill=tk.X, padx=10, pady=10)
-        tk.Label(info_frame, text="Evaluation Point:", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W)
-        tk.Label(info_frame, text="     ".join(points), bg="white").pack(anchor=tk.W)
-
-        stats_frame = tk.Frame(report_win, bg="white")
-        stats_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
-        tk.Label(stats_frame, text="Statistics over Function Values:", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W)
-        tk.Label(stats_frame, text=f"Min: {scalar_stats['min']}", bg="white").pack(anchor=tk.W)
-        tk.Label(stats_frame, text=f"Max: {scalar_stats['max']}", bg="white").pack(anchor=tk.W)
-        tk.Label(stats_frame, text=f"Mean: {scalar_stats['mean']}", bg="white").pack(anchor=tk.W)
-        tk.Label(stats_frame, text=f"Median: {scalar_stats['median']}", bg="white").pack(anchor=tk.W)
-        tk.Label(stats_frame, text=f"STD: {scalar_stats['std']}", bg="white").pack(anchor=tk.W)
-        tk.Label(stats_frame, text=f"MAD: {scalar_stats['mad']}", bg="white").pack(anchor=tk.W)
-
-        # Inverse the order of parameters and gradients for better visualization (the first parameter will be at the top of the plot)
-        param_names = param_names[::-1]
-        gradients = gradients[::-1]
-
-        # Plot gradient as a barplot
-        fig_height = min(10, len(param_names) * 0.9) # After 10, the captions start to be hidden
-        fig, ax = plt.subplots(figsize=(6, fig_height))
-
-        bars = ax.barh(param_names, gradients)
-
-        ax.set_xlabel("Partial Derivative")
-        ax.set_title('Gradient Barplot')
-
-        # Add padding so labels fit inside frame
-        max_abs = max(abs(g) for g in gradients)
-        padding = max_abs * 0.5
-
-        ax.set_xlim(
-            -max_abs - padding,
-            max_abs + padding
-        )
-
-        # Value labels
-        for bar, grad in zip(bars, gradients):
-            y = bar.get_y() + bar.get_height() / 2
-
-            if grad >= 0:
-                ax.text(
-                    grad + padding * 0.05,
-                    y,
-                    f"{grad:.4E}",
-                    va='center',
-                    ha='left',
-                    fontsize=9
-                )
-                bar.set_color('red')
-            else:
-                ax.text(
-                    grad - padding * 0.05,
-                    y,
-                    f"{grad:.4E}",
-                    va='center',
-                    ha='right',
-                    fontsize=9
-                )
-                bar.set_color('blue')
-
-        fig.tight_layout()
-        
-        canvas = FigureCanvasTkAgg(fig, master=report_win)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-    def show_sobol_report(self):
-        param_names = list(self.project.metadata['params'].keys())
-        sobol_params = self.project.metadata.get('sa_params')
-        results = self.project.results
-        cmap = self.project.metadata['colormap']
-
-        report_win = tk.Toplevel(self.root)
-        report_win.title("Sobol Index Results")
-        report_win.geometry(f"900x{max(len(param_names)*100, 600)}")
-        
-        if np.any(np.isnan(results)):
-            messagebox.showerror("Error", "One of the simulation runs did not produce a valid result (NaN). Cannot generate report.")
-            return
-
-        scalars = results
-        
-        # Calculate statistics over scalars
-        scalar_stats = {
-            'min': np.min(scalars),
-            'max': np.max(scalars),
-            'mean': np.mean(scalars),
-            'median': np.median(scalars),
-            'std': np.std(scalars),
-            'mad': np.median(np.abs(scalars - np.median(scalars)))
-        }
-
-        # Calculate Sobol indices
-        problem = {
-            'num_vars': len(param_names),
-            'names': param_names,
-            'bounds': [[v['min'], v['max']] for v in self.project.metadata['params'].values()]
-        }
-        
-        calc_second_order = sobol_params.get('calc_second_order')
-        
-        print(f'Calculating Sobol indices for problem:\n{problem}')
-        Si = sobol_analyze(problem, scalars, calc_second_order=calc_second_order, print_to_console=False)
-        
-        # Display statistics frame
-        stats_frame = tk.Frame(report_win, bg="white")
-        stats_frame.pack(fill=tk.X, padx=10, pady=10)
-        tk.Label(stats_frame, text="Statistics over Function Values:", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W)
-        tk.Label(stats_frame, text=f"Min: {scalar_stats['min']}", bg="white").pack(anchor=tk.W)
-        tk.Label(stats_frame, text=f"Max: {scalar_stats['max']}", bg="white").pack(anchor=tk.W)
-        tk.Label(stats_frame, text=f"Mean: {scalar_stats['mean']}", bg="white").pack(anchor=tk.W)
-        tk.Label(stats_frame, text=f"Median: {scalar_stats['median']}", bg="white").pack(anchor=tk.W)
-        tk.Label(stats_frame, text=f"STD: {scalar_stats['std']}", bg="white").pack(anchor=tk.W)
-        tk.Label(stats_frame, text=f"MAD: {scalar_stats['mad']}", bg="white").pack(anchor=tk.W)
-
-        # Display results table
-        table_frame = tk.Frame(report_win, bg="white", relief=tk.RIDGE, borderwidth=1)
-        table_frame.pack(fill=tk.X, padx=10, pady=10)
-        tk.Label(table_frame, text="Sobol Indices:", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W, padx=5, pady=5)
-        
-        results_table = tk.Frame(table_frame, bg="white")
-        results_table.pack(fill=tk.X, padx=5, pady=5)
-        
-        # Header row
-        header_frame = tk.Frame(results_table, bg="lightgrey")
-        header_frame.pack(fill=tk.X)
-        tk.Label(header_frame, text="Parameter(s)", bg="lightgrey", width=20, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-        tk.Label(header_frame, text="S1", bg="lightgrey", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-        tk.Label(header_frame, text="S1_conf", bg="lightgrey", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-        tk.Label(header_frame, text="ST", bg="lightgrey", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-        tk.Label(header_frame, text="ST_conf", bg="lightgrey", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-        if calc_second_order:
-            tk.Label(header_frame, text="S2", bg="lightgrey", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-            tk.Label(header_frame, text="S2_conf", bg="lightgrey", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-        
-        # First order indices
-        for i, param_name in enumerate(param_names):
-            row_frame = tk.Frame(results_table, bg="white")
-            row_frame.pack(fill=tk.X)
-            tk.Label(row_frame, text=param_name, bg="white", width=20, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-            tk.Label(row_frame, text=f"{Si['S1'][i]:.6E}", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-            tk.Label(row_frame, text=f"{Si['S1_conf'][i]:.6E}", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-            tk.Label(row_frame, text=f"{Si['ST'][i]:.6E}", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-            tk.Label(row_frame, text=f"{Si['ST_conf'][i]:.6E}", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-        
-        # Second order indices if calculated
-        if calc_second_order and 'S2' in Si:
-            second_order_indices = Si['S2']
-            second_order_conf = Si['S2_conf']
-            for i, param_name_i in enumerate(param_names):
-                for j, param_name_j in enumerate(param_names):
-                    if j > i:
-                        row_frame = tk.Frame(results_table, bg="white")
-                        row_frame.pack(fill=tk.X)
-                        pair_name = f"{param_name_i}-{param_name_j}"
-                        tk.Label(row_frame, text=pair_name, bg="white", width=20, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-                        tk.Label(row_frame, text="", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-                        tk.Label(row_frame, text="", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-                        tk.Label(row_frame, text="", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-                        tk.Label(row_frame, text="", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-                        tk.Label(row_frame, text=f"{second_order_indices[i, j]:.6E}", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-                        tk.Label(row_frame, text=f"{second_order_conf[i, j]:.6E}", bg="white", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-
-        # Create plot frame
-        plot_frame = tk.Frame(report_win, bg="white")
-        plot_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        # Button frame for switching plots
-        button_frame = tk.Frame(plot_frame, bg="white")
-        button_frame.pack(fill=tk.X, pady=5)
-
-        # Store current plot state
-        plot_state = {'current_plot': 'S1', 'fig': None, 'canvas': None}
-
-        def create_s1_plot():
-            param_names_reversed = param_names[::-1]
-            s1_reversed = Si['S1'][::-1]
-            
-            fig, ax = plt.subplots(figsize=(8, max(4, len(param_names) * 0.8)))
-            bars = ax.barh(param_names_reversed, s1_reversed, color='green')
-            ax.set_xlabel("S1 (First Order Index)")
-            ax.set_title('First Order Sobol Indices (S1)')
-
-            # Add padding so labels fit inside frame
-            max_abs = max(abs(s1) for s1 in s1_reversed)
-            padding = max_abs * 0.5
-            ax.set_xlim(-max_abs - padding, max_abs + padding)
-            
-            for bar, val in zip(bars, s1_reversed):
-                y = bar.get_y() + bar.get_height() / 2
-                ax.text(val + 0.02, y, f"{val:.4E}", va='center', ha='left', fontsize=9)
-            
-            fig.tight_layout()
-            return fig
-
-        def create_st_plot():
-            param_names_reversed = param_names[::-1]
-            st_reversed = Si['ST'][::-1]
-            
-            fig, ax = plt.subplots(figsize=(8, max(4, len(param_names) * 0.8)))
-            bars = ax.barh(param_names_reversed, st_reversed, color='orange')
-            ax.set_xlabel("ST (Total Order Index)")
-            ax.set_title('Total Order Sobol Indices (ST)')
-
-            # Add padding so labels fit inside frame
-            max_abs = max(abs(st) for st in st_reversed)
-            padding = max_abs * 0.5
-            ax.set_xlim(-max_abs - padding, max_abs + padding)
-            
-            for bar, val in zip(bars, st_reversed):
-                y = bar.get_y() + bar.get_height() / 2
-                ax.text(val + 0.02, y, f"{val:.4E}", va='center', ha='left', fontsize=9)
-            
-            fig.tight_layout()
-            return fig
-
-        def create_s2_plot():
-            if not calc_second_order or 'S2' not in Si:
-                return None
-            
-            second_order = Si['S2']
-            fig, ax = plt.subplots(figsize=(8, 6))
-            
-            # Create heatmap
-            im = ax.imshow(second_order, cmap='YlOrRd', aspect='auto')
-            ax.set_xticks(range(len(param_names)))
-            ax.set_yticks(range(len(param_names)))
-            ax.set_xticklabels(param_names, rotation=45, ha='right')
-            ax.set_yticklabels(param_names)
-            ax.set_title('Second Order Sobol Indices (S2)')
-            
-            # Add colorbar
-            plt.colorbar(im, ax=ax)
-            
-            # Add values to heatmap
-            for i in range(len(param_names)):
-                for j in range(len(param_names)):
-                    text = ax.text(j, i, f"{second_order[i, j]:.3E}", ha="center", va="center", color="black", fontsize=8)
-            
-            fig.tight_layout()
-            return fig
-
-        def show_plot(plot_type):
-            # Clear previous plot
-            if plot_state['canvas']:
-                plot_state['canvas'].get_tk_widget().destroy()
-            if plot_state['fig']:
-                plt.close(plot_state['fig'])
-            
-            # Create new plot
-            if plot_type == 'S1':
-                plot_state['fig'] = create_s1_plot()
-            elif plot_type == 'ST':
-                plot_state['fig'] = create_st_plot()
-            elif plot_type == 'S2':
-                plot_state['fig'] = create_s2_plot()
-            
-            if plot_state['fig']:
-                plot_state['canvas'] = FigureCanvasTkAgg(plot_state['fig'], master=plot_frame)
-                plot_state['canvas'].draw()
-                plot_state['canvas'].get_tk_widget().pack(fill=tk.BOTH, expand=True)
-            
-            plot_state['current_plot'] = plot_type
-            
-            # Update button states
-            s1_btn.config(state=tk.DISABLED if plot_type == 'S1' else tk.NORMAL)
-            st_btn.config(state=tk.DISABLED if plot_type == 'ST' else tk.NORMAL)
-            s2_btn.config(state=tk.DISABLED if plot_type == 'S2' else (tk.NORMAL if calc_second_order else tk.DISABLED))
-
-        # Create buttons
-        s1_btn = tk.Button(button_frame, text="S1", command=lambda: show_plot('S1'), bg="white")
-        s1_btn.pack(side=tk.LEFT, padx=5)
-        
-        st_btn = tk.Button(button_frame, text="ST", command=lambda: show_plot('ST'), bg="white")
-        st_btn.pack(side=tk.LEFT, padx=5)
-        
-        s2_btn = tk.Button(button_frame, text="S2", command=lambda: show_plot('S2'), bg="white")
-        s2_btn.pack(side=tk.LEFT, padx=5)
-        if not calc_second_order:
-            s2_btn.config(state=tk.DISABLED)
-        
-        # Show initial plot
-        show_plot('S1')
-
     def start_new_sa(self):
         folder = filedialog.askdirectory(title="Select Empty Folder for New Project")
         if not folder: return
@@ -709,7 +731,6 @@ class MainApp:
             return
         
         for widget in self.root.winfo_children(): widget.destroy()
-        
         self.root.title("New Project")
         self.center_window(400, 200)
         self.root.config(bg="white")
@@ -762,7 +783,6 @@ class MainApp:
 
     def show_recording_menu(self):
         for widget in self.root.winfo_children(): widget.destroy()
-        
         self.root.title(f"Recording Menu (Paused) | {self.project.metadata['name']}")
         self.center_window(500, 700)
         self.root.config(bg="white")
@@ -794,7 +814,6 @@ class MainApp:
 
     def show_colormap_selection(self):
         for widget in self.root.winfo_children(): widget.destroy()
-
         self.root.title(f"Select Colormap | {self.project.metadata['name']}")
         self.center_window(400, 180)
         self.root.config(bg="white")
@@ -851,7 +870,6 @@ class MainApp:
 
     def show_replay_pause_menu(self):
         for widget in self.root.winfo_children(): widget.destroy()
-        
         self.root.title(f"Replay paused | {self.project.metadata['name']}")
         self.center_window(500, 200)
         self.root.config(bg="white")
@@ -1064,110 +1082,56 @@ class MainApp:
 
     def edit_param_ui(self):
         for widget in self.root.winfo_children(): widget.destroy()
-        
         self.root.title("Edit Parameters")
         self.center_window(700, 500)
         self.root.config(bg="white")
         
         main_frame = tk.Frame(self.root, bg="white")
         main_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
-        
         tk.Label(main_frame, text="Parameter settings", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W, pady=10)
-        
-        changes_made = {"changed": False}
-        param_entries = {}
         
         table_frame = tk.Frame(main_frame, bg="white", relief=tk.SUNKEN, borderwidth=1)
         table_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=10)
-        
-        header_frame = tk.Frame(table_frame, bg="lightgrey")
-        header_frame.pack(fill=tk.X)
-        tk.Label(header_frame, text="Name", bg="lightgrey", width=20, anchor=tk.W, font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=5, pady=5)
-        tk.Label(header_frame, text="Min", bg="lightgrey", width=15, anchor=tk.W, font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=5, pady=5)
-        tk.Label(header_frame, text="Max", bg="lightgrey", width=15, anchor=tk.W, font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=5, pady=5)
-        
-        canvas = tk.Canvas(table_frame, bg="white", highlightthickness=0)
-        scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=canvas.yview)
-        scrollable_frame = tk.Frame(canvas, bg="white")
-        
-        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        
+
+        columns = ["Name", "Min", "Max"]
+        self.param_tree = EditableTreeview(table_frame, columns=columns, editable_cols=[0, 1, 2], tree_height=10)
+        self.param_tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        data = []
         for p_name, bounds in self.project.metadata['params'].items():
-            row_frame = tk.Frame(scrollable_frame, bg="white", relief=tk.RIDGE, borderwidth=1)
-            row_frame.pack(fill=tk.X, padx=2, pady=2)
-            
-            tk.Label(row_frame, text=p_name, bg="white", width=20, anchor=tk.W).pack(side=tk.LEFT, padx=5, pady=5)
-            min_var = tk.StringVar(value=str(bounds['min']))
-            min_entry = tk.Entry(row_frame, textvariable=min_var, width=15, bg="white")
-            min_entry.pack(side=tk.LEFT, padx=5, pady=5)
-            
-            max_var = tk.StringVar(value=str(bounds['max']))
-            max_entry = tk.Entry(row_frame, textvariable=max_var, width=15, bg="white")
-            max_entry.pack(side=tk.LEFT, padx=5, pady=5)
-            
-            def delete_param_callback(param_name=p_name):
-                if messagebox.askyesno("Confirm Delete", f"Delete parameter '{param_name}'?"):
-                    self.delete_param(param_name)
-            
-            tk.Button(row_frame, text="Delete", fg="red", bg="white", command=delete_param_callback).pack(side=tk.LEFT, padx=5, pady=5)
-            
-            def on_change(*args):
-                changes_made["changed"] = True
-                update_save_button()
-            
-            min_var.trace('w', on_change)
-            max_var.trace('w', on_change)
-            param_entries[p_name] = {"min": min_var, "max": max_var}
+            data.append([p_name, bounds['min'], bounds['max']])
+        self.param_tree.populate(data)
+
+        # Bottom Actions
+        actions_frame = tk.Frame(main_frame, bg="white")
+        actions_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
         
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        button_frame = tk.Frame(main_frame, bg="white")
-        button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
-        
-        save_button = tk.Button(button_frame, text="Save", bg="lightgrey", fg="grey", state=tk.DISABLED)
-        save_button.pack(side=tk.RIGHT, padx=5)
-        
-        def update_save_button():
-            if changes_made["changed"]: save_button.config(state=tk.NORMAL, bg="lightgreen", fg="black")
-            else: save_button.config(state=tk.DISABLED, bg="lightgrey", fg="grey")
-        
+        tk.Button(actions_frame, text="Delete Selected Row", fg="red", bg="white", command=self.param_tree.delete_selected).pack(side=tk.LEFT, padx=5)
+
         def on_save_clicked():
+            self.param_tree.commit_editor()
             try:
-                for p_name, entries in param_entries.items():
-                    min_val = float(entries["min"].get())
-                    max_val = float(entries["max"].get())
+                new_data = self.param_tree.get_data()
+                new_params = {}
+                for row in new_data:
+                    p_name = str(row[0]).strip()
+                    if not p_name: continue
+                    min_val = float(row[1])
+                    max_val = float(row[2])
                     if min_val >= max_val:
                         messagebox.showerror("Validation Error", f"Parameter '{p_name}': Min value must be less than Max value")
                         return
+                    new_params[p_name] = {"min": min_val, "max": max_val}
                 
-                for p_name, entries in param_entries.items():
-                    self.project.metadata['params'][p_name] = {"min": float(entries["min"].get()), "max": float(entries["max"].get())}
-                
+                self.project.metadata['params'] = new_params
                 self.project.save()
                 messagebox.showinfo("Success", "Parameter changes saved successfully")
-                changes_made["changed"] = False
-                update_save_button()
                 self.edit_param_ui()
             except ValueError:
                 messagebox.showerror("Validation Error", "Min and Max values must be valid numbers")
         
-        save_button.config(command=on_save_clicked)
-        tk.Button(button_frame, text="Back", bg="white", command=self.show_recording_menu).pack(side=tk.LEFT, padx=5)
-
-    def delete_param(self, param_name):
-        if param_name in self.project.metadata['params']:
-            del self.project.metadata['params'][param_name]
-            self.project.save()
-            
-            cmd_file = os.path.join(self.project.folder_path, "commands.txt")
-            if os.path.exists(cmd_file):
-                with open(cmd_file, "r") as f: lines = f.readlines()
-                filtered_lines = [line for line in lines if not line.strip().startswith(f"enter value for {param_name}")]
-                with open(cmd_file, "w") as f: f.writelines(filtered_lines)
-            self.edit_param_ui()
+        tk.Button(actions_frame, text="Save Changes", bg="lightgreen", command=on_save_clicked).pack(side=tk.RIGHT, padx=5)
+        tk.Button(actions_frame, text="Back", bg="white", command=self.show_recording_menu).pack(side=tk.RIGHT, padx=5)
 
     def sa_setup_ui(self):
         for widget in self.root.winfo_children(): widget.destroy()
@@ -1219,35 +1183,20 @@ class MainApp:
                     return
                 tk.Label(param_frame, text="Parameter settings", bg="white", font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=10)
                 table_frame = tk.Frame(param_frame, bg="white")
-                table_frame.pack(fill=tk.X, padx=10)
+                table_frame.pack(fill=tk.BOTH, expand=True)
+
+                columns = ["Name", "Range", "Point", "Step"]
+                self.grad_tree = EditableTreeview(table_frame, columns=columns, editable_cols=[2, 3], tree_height=8)
+                self.grad_tree.pack(fill=tk.BOTH, expand=True)
                 
-                header_frame = tk.Frame(table_frame, bg="lightgrey")
-                header_frame.pack(fill=tk.X)
-                tk.Label(header_frame, text="Name", bg="lightgrey", width=15, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-                tk.Label(header_frame, text="Interval", bg="lightgrey", width=15, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-                tk.Label(header_frame, text="Point", bg="lightgrey", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-                tk.Label(header_frame, text="Step", bg="lightgrey", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-                
-                param_entries = {}
                 saved_grad_params = self.project.metadata.get('sa_params', {}) if self.project.metadata.get('sa_type') == 'Local Gradient Calculation' else {}
+                data = []
                 for param_name, bounds in self.project.metadata['params'].items():
-                    row_frame = tk.Frame(table_frame, bg="white")
-                    row_frame.pack(fill=tk.X)
-                    
-                    tk.Label(row_frame, text=param_name, bg="white", width=15, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-                    tk.Label(row_frame, text=f"[{bounds['min']}, {bounds['max']}]", bg="white", width=15, anchor=tk.W).pack(side=tk.LEFT, padx=2, pady=2)
-                    
                     default_point = saved_grad_params.get(param_name, {}).get('point', (bounds['min'] + bounds['max']) / 2)
-                    point_var = tk.StringVar(value=str(default_point))
-                    tk.Entry(row_frame, textvariable=point_var, width=12, bg="white").pack(side=tk.LEFT, padx=2, pady=2)
-                    
                     default_step = saved_grad_params.get(param_name, {}).get('step', 0.1)
-                    step_var = tk.StringVar(value=str(default_step))
-                    tk.Entry(row_frame, textvariable=step_var, width=12, bg="white").pack(side=tk.LEFT, padx=2, pady=2)
-                    
-                    param_entries[param_name] = {"point": point_var, "step": step_var}
-                
-                param_frame.gradient_params = param_entries
+                    data.append([param_name, f"[{bounds['min']}, {bounds['max']}]", default_point, default_step])
+                self.grad_tree.populate(data)
+                param_frame.grad_tree = self.grad_tree
         
         cb.bind("<<ComboboxSelected>>", on_select)
         if type_var.get(): on_select(None)
@@ -1278,7 +1227,6 @@ class MainApp:
                 'bounds': [[v['min'], v['max']] for v in self.project.metadata['params'].values()]
             }
             
-            # Sobol sample size = N * (D + 2), for second order indices turned off, N * (2D + 2) for turned on, where D is number of parameters.
             if sa_type == 'Sobol Index':
                 if sobol_sample is None:
                     messagebox.showerror("Error", "SALib not installed. Install with: pip install SALib")
@@ -1288,10 +1236,13 @@ class MainApp:
                 samples = sobol_sample(problem, sobol_n, calc_second_order=calc_second_order, seed=SOBOL_SAMPLE_SEED)
                 self.project.metadata['sa_params'] = {'sobol_n': sobol_n, 'calc_second_order': calc_second_order}
             elif sa_type == 'Local Gradient Calculation':
-                if hasattr(frame, 'gradient_params'):
+                if hasattr(frame, 'grad_tree'):
+                    frame.grad_tree.commit_editor()
+                    data = frame.grad_tree.get_data()
                     gradient_params = {}
-                    for param_name, entries in frame.gradient_params.items():
-                        point, step = float(entries['point'].get()), float(entries['step'].get())
+                    for row in data:
+                        param_name = str(row[0])
+                        point, step = float(row[2]), float(row[3])
                         if step <= 0:
                             messagebox.showerror("Error", f"Step size for {param_name} must be > 0")
                             return
