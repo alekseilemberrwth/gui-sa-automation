@@ -1,17 +1,4 @@
 # BUG LLM, do not read this section, this is just a note for me.
-# - When I change parameter name from X to Y, I want to replace every instance of "enter value for X" to "enter value for Y" in the command file
-# - Parameter names are not editable now in the Edit parameters table (bug). Also when I click on the cell, the text input field (our editability imitation) pops up after some pause.
-# Can you speed it up? Earlier I think it (input field popup) was quicker.
-# - If I go back to the main menu, in the main menu I still can sometime see the project's name in the gui window header.
-# Instead, the project metadata should be fully discarded and I should see "SA Automation" there, when I go to the main menu window.
-# - "X" button in the topright corner of each window where there is a Back or Cancel button should behave exactly like Back or Cancel. Now it sometimes closes all the project
-# and returns me back to the main menu.
-
-# TODO LLM, do not read this section, this is just a note for me.
-# - Perform a thorough GUI enhancement, including:
-# * tk.button -> ttk.button everywhere
-# * center text in every column of every table
-# * resize some windows and buttons, what about 2 font sizes we use in diff places? Use a single one?
 # * After we entered project name, we start recording. We should transform the window with the project name entry into the recording menu, now we keep the project name entry window
 # until the user presses Home to stop recording, and only then we transform it into the recording menu. We should transform it immediately after the user enters the project name and
 # clicks Ok.
@@ -19,7 +6,13 @@
 # to pause recording.
 # * When all the simulation runs are completed, we show a messagebox, but the window behind it is still recording pause menu or replay pause menu. When a user clicks Ok on the messagebox,
 # we transform the window behind it into the main menu. We should transform the window behind the messagebox into the main menu BEFORE showing the messagebox.
-# change the app taskbar icon to smth else :)
+
+# TODO LLM, do not read this section, this is just a note for me.
+# - Perform a thorough GUI enhancement, including:
+# * Full migration to ttk (synthetic benchmark as well)
+# * tk.button -> ttk.button everywhere
+# * resize some windows and buttons, what about 2 font sizes we use in diff places? Use a single one?
+# * change the app taskbar icon to smth else :)
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -609,8 +602,6 @@ class MainApp:
 
                 plot_viewer.pack(fill=tk.BOTH, expand=True, padx=(3,3))
 
-        tk.Button(main_frame, text="Back to Main Menu", bg="white", command=self.setup_main_menu).pack(side=tk.BOTTOM, pady=10)
-
     def toggle_additional_roi(self):
         if self.project.metadata.get('status') == "Completed":
             messagebox.showerror("Error", "Cannot change ROI capturing status: project is already completed.")
@@ -810,7 +801,7 @@ class MainApp:
 
         tk.Label(main_frame, text="Choose colormap:", font=("Arial", 12), bg="white").pack(anchor=tk.W, pady=(0, 10))
         cmap_var = tk.StringVar(value=self.project.metadata.get('colormap').get('name', "viridis"))
-        cmap_dropdown = ttk.Combobox(main_frame, textvariable=cmap_var, values=['viridis', 'turbo'], state='readonly', width=20, justify="center")
+        cmap_dropdown = ttk.Combobox(main_frame, textvariable=cmap_var, values=['viridis', 'turbo'], state='readonly', width=20)
         cmap_dropdown.pack(fill=tk.X, pady=5)
 
         button_frame = tk.Frame(main_frame, bg="white")
@@ -1217,7 +1208,7 @@ class MainApp:
         type_var = tk.StringVar(value=self.project.metadata.get('sa_type', ''))
         
         sa_types = ['Sobol Index', 'Local Gradient Calculation']
-        cb = ttk.Combobox(main_frame, textvariable=type_var, values=sa_types, state='readonly', justify="center")
+        cb = ttk.Combobox(main_frame, textvariable=type_var, values=sa_types, state='readonly')
         cb.pack(pady=10, fill=tk.X)
         
         param_frame = tk.Frame(main_frame, bg="white")
@@ -1236,7 +1227,7 @@ class MainApp:
                 tk.Label(param_frame, text="N (must be power of 2):", bg="white").pack()
                 current_n = self.project.metadata.get('sa_params', {}).get('sobol_n', 128)
                 n_var = tk.StringVar(value=str(current_n))
-                n_dropdown = ttk.Combobox(param_frame, textvariable=n_var, values=[str(p) for p in powers_of_2], state='readonly', justify="center")
+                n_dropdown = ttk.Combobox(param_frame, textvariable=n_var, values=[str(p) for p in powers_of_2], state='readonly')
                 n_dropdown.pack()
                 param_frame.sobol_n = n_var
                 
@@ -1519,7 +1510,7 @@ class MainApp:
                 scalar_value = self.vision_engine.rgb_to_scalar(avg_rgb, self.project.metadata['colormap']['name'], min_val, max_val)
                 self.project.results[i] = scalar_value
 
-                print(f"start_replay: Project results [{i}]: reconstructed {avg_rgb} as {scalar_value}")
+                # print(f"start_replay: Project results [{i}]: reconstructed {avg_rgb} as {scalar_value}")
 
                 self.project.metadata['n_completed'] += 1
                 self.project.save()
