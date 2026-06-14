@@ -63,8 +63,8 @@ class EditableTreeview(ttk.Frame):
 
         col_widths = col_widths or {}
         for col in columns:
-            self.tree.heading(col, text=col)
-            self.tree.column(col, width=col_widths.get(col, 150), minwidth=60, stretch=False)
+            self.tree.heading(col, text=col, anchor="center")
+            self.tree.column(col, width=col_widths.get(col, 150), minwidth=60, stretch=False, anchor="center")
 
         self.v_scroll = ttk.Scrollbar(self, orient="vertical", command=self.on_vertical_scroll)
         self.h_scroll = ttk.Scrollbar(self, orient="horizontal", command=self.on_horizontal_scroll)
@@ -74,8 +74,8 @@ class EditableTreeview(ttk.Frame):
         self.v_scroll.grid(row=0, column=1, sticky="ns")
         self.h_scroll.grid(row=1, column=0, sticky="ew")
 
-        # Use ButtonRelease to prevent the Treeview from stealing focus back immediately
-        self.tree.bind("<ButtonRelease-1>", self.on_click)
+        # Capture Button-1 to instantly place editor and stop Treeview from stealing focus
+        self.tree.bind("<Button-1>", self.on_click)
         self.tree.bind("<MouseWheel>", self.on_mousewheel)
 
         if self.allow_delete:
@@ -110,33 +110,32 @@ class EditableTreeview(ttk.Frame):
         
         item = self.tree.identify_row(event.y)
         if not item: return
+        
         self.tree.selection_set(item)
+        self.tree.focus(item)
         
         column = self.tree.identify_column(event.x)
         col_index = int(column[1:]) - 1
 
         if col_index not in self.editable_cols: return
-
+        
         x, y, width, height = self.tree.bbox(item, column)
         value = self.tree.set(item, column)
 
-        self.editor = ttk.Entry(self.tree)
+        self.editor = ttk.Entry(self.tree, justify="center")
         self.editor.insert(0, value)
         self.editor.place(x=x, y=y, width=width, height=height)
         
-        # Give focus safely and push cursor to the end
-        self.after(10, lambda: self._focus_editor())
+        self.editor.focus_set()
+        self.editor.icursor(tk.END)
 
         self.editing_item = item
         self.editing_column = column
 
         self.editor.bind("<Return>", lambda e: self.commit_editor())
         self.editor.bind("<Escape>", lambda e: self.cancel_editor())
-
-    def _focus_editor(self):
-        if self.editor:
-            self.editor.focus_set()
-            self.editor.icursor(tk.END)
+        
+        return "break"
 
     def commit_editor(self):
         if self.editor is None: return
@@ -429,12 +428,10 @@ class SAViewer(ttk.Frame):
 class MainApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SA Automation")
         self.root.config(bg="white")
         self.project = None
         self.recorder = None
         self.vision_engine = None
-        self.screen_stack = []
         self.roi_selection = None
         self.recording_paused = False
         self.replay_paused = False
@@ -444,7 +441,6 @@ class MainApp:
         self.in_roi_preview = False
         self.replay_keyboard_listener = None
         
-        self.root.protocol("WM_DELETE_WINDOW", self.on_window_close)
         self.setup_main_menu()
 
     def center_window(self, width, height):
@@ -476,24 +472,6 @@ class MainApp:
                 f.write(line)
             f.write(cmd + "\n")
 
-    def on_window_close(self):
-        if self.in_roi_preview:
-            self.in_roi_preview = False
-            self.show_recording_menu()
-            return
-        self.go_back()
-    
-    def go_back(self):
-        if len(self.screen_stack) > 0:
-            self.screen_stack.pop()
-            if len(self.screen_stack) > 0:
-                prev_screen, prev_data = self.screen_stack[-1]
-                self.show_screen(prev_screen, prev_data)
-            else:
-                self.quit_app()
-        else:
-            self.quit_app()
-
     def quit_app(self):
         self._stop_replay_keyboard_listener()
         if self.recorder:
@@ -503,38 +481,20 @@ class MainApp:
         self.root.destroy()
         sys.exit(0)
 
-    def push_screen(self, screen_name, screen_data=None):
-        self.screen_stack.append((screen_name, screen_data))
-
-    def show_screen(self, screen_name, screen_data=None):
-        if screen_name == "main_menu":
-            self.setup_main_menu()
-        elif screen_name == "project_dashboard":
-            self.show_project_dashboard()
-        elif screen_name == "recording_menu":
-            self.show_recording_menu()
-        elif screen_name == "add_param":
-            self.add_param_ui()
-        elif screen_name == "edit_param":
-            self.edit_param_ui()
-        elif screen_name == "sa_setup":
-            self.sa_setup_ui()
-        elif screen_name == "capture_completion_choice":
-            self.show_completion_indicator_choice()
-        elif screen_name == "timeout_only_input":
-            self.show_timeout_only_input()
-        elif screen_name == "colormap_selection":
-            self.show_colormap_selection()
-
     def setup_main_menu(self):
         for widget in self.root.winfo_children(): widget.destroy()
+        self.root.title("SA Automation")
+        self.project = None
+        self.recorder = None
+        self.vision_engine = None
+        self.root.protocol("WM_DELETE_WINDOW", self.quit_app)
+
         self.center_window(500, 600)
         main_frame = tk.Frame(self.root, bg="white")
         main_frame.pack(fill=tk.BOTH, expand=True)
         tk.Label(main_frame, text="Sensitivity Analysis Automation", font=("Arial", 14), bg="white").pack(pady=20)
         tk.Button(main_frame, text="Start new SA", command=self.start_new_sa, width=20, bg="white").pack(pady=10)
         tk.Button(main_frame, text="Open existing SA", command=self.open_existing_sa, width=20, bg="white").pack()
-        self.screen_stack = [("main_menu", None)]
 
     def open_existing_sa(self):
         folder = filedialog.askdirectory()
@@ -543,14 +503,15 @@ class MainApp:
         self.project = Project(folder)
         if not self.project.load():
             messagebox.showerror("Error", "Failed to load project. Project data might be corrupted or incomplete.")
+            self.setup_main_menu()
             return
         
         err = self.project.validate()
         if err:
             messagebox.showerror("Invalid Project", err)
+            self.setup_main_menu()
             return
         
-        self.push_screen("project_dashboard")
         self.vision_engine = VisionEngine(self.project.folder_path)
         self.show_project_dashboard()
 
@@ -560,13 +521,13 @@ class MainApp:
         self.vision_engine = VisionEngine(self.project.folder_path)
         self.recording_paused = True
         self.root.deiconify()
-        self.push_screen("recording_menu")
         self.show_recording_menu()
 
     def show_project_dashboard(self):
         for widget in self.root.winfo_children(): widget.destroy()
         
         self.root.title(f"Project: {self.project.metadata['name']}")
+        self.root.protocol("WM_DELETE_WINDOW", self.setup_main_menu)
         self.center_window(1100, 900)
         self.root.config(bg="white")
         
@@ -648,6 +609,8 @@ class MainApp:
 
                 plot_viewer.pack(fill=tk.BOTH, expand=True, padx=(3,3))
 
+        tk.Button(main_frame, text="Back to Main Menu", bg="white", command=self.setup_main_menu).pack(side=tk.BOTTOM, pady=10)
+
     def toggle_additional_roi(self):
         if self.project.metadata.get('status') == "Completed":
             messagebox.showerror("Error", "Cannot change ROI capturing status: project is already completed.")
@@ -686,37 +649,29 @@ class MainApp:
         self.show_recording_menu()
 
     def capture_completion_indicator(self):
-        self.push_screen("capture_completion_choice")
         self.show_completion_indicator_choice()
 
     def show_completion_indicator_choice(self):
         for widget in self.root.winfo_children(): widget.destroy()
         self.root.title(f"Set Simulation Completion Indicator | {self.project.metadata['name']}")
+        self.root.protocol("WM_DELETE_WINDOW", self.show_recording_menu)
         self.center_window(400, 125)
         self.root.config(bg="white")
         
         main_frame = tk.Frame(self.root, bg="white")
         main_frame.pack(fill=tk.BOTH, expand=True, pady=20, padx=20)
             
-        def on_timeout():
-            if len(self.screen_stack) > 0: self.screen_stack.pop()
-            self.push_screen("timeout_only_input")
-            self.show_timeout_only_input()
-            
-        def on_image_timeout():
-            if len(self.screen_stack) > 0: self.screen_stack.pop()
-            self.start_roi_selection("completion_indicator")
-            
         btn_frame = tk.Frame(main_frame, bg="white")
         btn_frame.pack(pady=20)
-        tk.Button(btn_frame, text="Timeout Only", command=on_timeout, bg="white", width=15).pack(side=tk.LEFT, padx=10)
-        tk.Button(btn_frame, text="Image + Timeout", command=on_image_timeout, bg="white", width=15).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="Timeout Only", command=self.show_timeout_only_input, bg="white", width=15).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="Image + Timeout", command=lambda: self.start_roi_selection("completion_indicator"), bg="white", width=15).pack(side=tk.LEFT, padx=10)
         
-        tk.Button(main_frame, text="Back", command=lambda: self.go_back(), bg="white").pack(side=tk.BOTTOM, pady=10)
+        tk.Button(main_frame, text="Back", command=self.show_recording_menu, bg="white").pack(side=tk.BOTTOM, pady=10)
     
     def show_timeout_only_input(self):
         for widget in self.root.winfo_children(): widget.destroy()
         self.root.title(f"Timeout Configuration | {self.project.metadata['name']}")
+        self.root.protocol("WM_DELETE_WINDOW", self.show_completion_indicator_choice)
         self.center_window(400, 200)
         self.root.config(bg="white")
         
@@ -740,19 +695,14 @@ class MainApp:
                 for f in os.listdir(self.project.folder_path):
                     if f.startswith("simulation_completion_indicator"):
                         os.remove(os.path.join(self.project.folder_path, f))
-                if len(self.screen_stack) > 0: self.screen_stack.pop()
                 self.show_recording_menu()
             except ValueError:
                 messagebox.showerror("Error", "Please enter a valid number")
         
-        def on_back():
-            if len(self.screen_stack) > 0: self.screen_stack.pop()
-            self.show_completion_indicator_choice()
-        
         button_frame = tk.Frame(main_frame, bg="white")
         button_frame.pack(side=tk.BOTTOM, pady=10)
         tk.Button(button_frame, text="Confirm", command=on_confirm, bg="white").pack(side=tk.LEFT, padx=5)
-        tk.Button(button_frame, text="Back", command=on_back, bg="white").pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Back", command=self.show_completion_indicator_choice, bg="white").pack(side=tk.LEFT, padx=5)
         
         timeout_entry.bind("<Return>", lambda e: on_confirm())
 
@@ -768,6 +718,7 @@ class MainApp:
         
         for widget in self.root.winfo_children(): widget.destroy()
         self.root.title("New Project")
+        self.root.protocol("WM_DELETE_WINDOW", self.setup_main_menu)
         self.center_window(400, 200)
         self.root.config(bg="white")
         
@@ -813,13 +764,12 @@ class MainApp:
         except: pass
         self.root.lift()
         self.root.focus_force()
-        if not self.screen_stack or self.screen_stack[-1][0] != "recording_menu":
-            self.push_screen("recording_menu")
         self.show_recording_menu()
 
     def show_recording_menu(self):
         for widget in self.root.winfo_children(): widget.destroy()
         self.root.title(f"Recording Menu (Paused) | {self.project.metadata['name']}")
+        self.root.protocol("WM_DELETE_WINDOW", self.setup_main_menu)
         self.center_window(500, 700)
         self.root.config(bg="white")
         
@@ -831,7 +781,7 @@ class MainApp:
         tk.Button(main_frame, text="Set simulation completion indicator", command=self.capture_completion_indicator, bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="Capture region of interest", command=lambda: self.start_roi_selection("main_roi"), bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="Capture additional region of interest", command=lambda: self.start_roi_selection("additional_roi"), bg="white").pack(fill=tk.X, padx=20, pady=5)
-        tk.Button(main_frame, text="Select colormap", command=lambda: [self.push_screen("colormap_selection"), self.show_colormap_selection()], bg="white").pack(fill=tk.X, padx=20, pady=5)
+        tk.Button(main_frame, text="Select colormap", command=self.show_colormap_selection, bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="Select colormap min value field", command=lambda: self.select_colormap_value_field("min"), bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="Select colormap max value field", command=lambda: self.select_colormap_value_field("max"), bg="white").pack(fill=tk.X, padx=20, pady=5)
         tk.Button(main_frame, text="View command file", command=self.view_cmd_file, bg="white").pack(fill=tk.X, padx=20, pady=5)
@@ -851,6 +801,7 @@ class MainApp:
     def show_colormap_selection(self):
         for widget in self.root.winfo_children(): widget.destroy()
         self.root.title(f"Select Colormap | {self.project.metadata['name']}")
+        self.root.protocol("WM_DELETE_WINDOW", self.show_recording_menu)
         self.center_window(400, 180)
         self.root.config(bg="white")
 
@@ -859,7 +810,7 @@ class MainApp:
 
         tk.Label(main_frame, text="Choose colormap:", font=("Arial", 12), bg="white").pack(anchor=tk.W, pady=(0, 10))
         cmap_var = tk.StringVar(value=self.project.metadata.get('colormap').get('name', "viridis"))
-        cmap_dropdown = ttk.Combobox(main_frame, textvariable=cmap_var, values=['viridis', 'turbo'], state='readonly', width=20)
+        cmap_dropdown = ttk.Combobox(main_frame, textvariable=cmap_var, values=['viridis', 'turbo'], state='readonly', width=20, justify="center")
         cmap_dropdown.pack(fill=tk.X, pady=5)
 
         button_frame = tk.Frame(main_frame, bg="white")
@@ -868,17 +819,10 @@ class MainApp:
         def on_ok():
             self.project.metadata['colormap']['name'] = cmap_var.get()
             self.project.save()
-            if len(self.screen_stack) > 0:
-                self.screen_stack.pop()
-            self.show_recording_menu()
-
-        def on_cancel():
-            if len(self.screen_stack) > 0:
-                self.screen_stack.pop()
             self.show_recording_menu()
 
         tk.Button(button_frame, text="Ok", command=on_ok, bg="lightgreen").pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
-        tk.Button(button_frame, text="Cancel", command=on_cancel, bg="lightcoral").pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+        tk.Button(button_frame, text="Cancel", command=self.show_recording_menu, bg="lightcoral").pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
 
     def pause_replay(self):
         self.replay_paused = True
@@ -907,6 +851,7 @@ class MainApp:
     def show_replay_pause_menu(self):
         for widget in self.root.winfo_children(): widget.destroy()
         self.root.title(f"Replay paused | {self.project.metadata['name']}")
+        self.root.protocol("WM_DELETE_WINDOW", self.stop_replay)
         self.center_window(500, 200)
         self.root.config(bg="white")
         
@@ -997,6 +942,7 @@ class MainApp:
         window_width = max(display_width + 40, 280)
         window_height = display_height + 140
         self.root.title("Screenshot Preview")
+        self.root.protocol("WM_DELETE_WINDOW", self.show_recording_menu)
         self.center_window(window_width, window_height)
         self.root.config(bg="white")
         
@@ -1073,6 +1019,7 @@ class MainApp:
         for widget in self.root.winfo_children(): widget.destroy()
         
         self.root.title("Add New Parameter")
+        self.root.protocol("WM_DELETE_WINDOW", self.show_recording_menu)
         self.center_window(400, 300)
         self.root.config(bg="white")
         
@@ -1118,6 +1065,7 @@ class MainApp:
     def edit_param_ui(self):
         for widget in self.root.winfo_children(): widget.destroy()
         self.root.title("Edit Parameters")
+        self.root.protocol("WM_DELETE_WINDOW", self.show_recording_menu)
         self.center_window(700, 500)
         self.root.config(bg="white")
         
@@ -1128,13 +1076,12 @@ class MainApp:
         table_frame = tk.Frame(main_frame, bg="white", relief=tk.SUNKEN, borderwidth=1)
         table_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=10)
 
-        # Store Original Name invisibly to detect renames
         columns = ["Original Name", "Name", "Min", "Max"]
         self.param_tree = EditableTreeview(
             table_frame, 
             columns=columns, 
             display_columns=["Name", "Min", "Max"], 
-            editable_cols=[1, 2, 3], 
+            editable_cols=[0, 1, 2], 
             tree_height=min(10, max(1, len(self.project.metadata['params']))), 
             allow_delete=True
         )
@@ -1259,6 +1206,7 @@ class MainApp:
         for widget in self.root.winfo_children(): widget.destroy()
         
         self.root.title("SA Setup")
+        self.root.protocol("WM_DELETE_WINDOW", self.show_recording_menu)
         self.center_window(500, 550)
         self.root.config(bg="white")
         
@@ -1269,7 +1217,7 @@ class MainApp:
         type_var = tk.StringVar(value=self.project.metadata.get('sa_type', ''))
         
         sa_types = ['Sobol Index', 'Local Gradient Calculation']
-        cb = ttk.Combobox(main_frame, textvariable=type_var, values=sa_types, state='readonly')
+        cb = ttk.Combobox(main_frame, textvariable=type_var, values=sa_types, state='readonly', justify="center")
         cb.pack(pady=10, fill=tk.X)
         
         param_frame = tk.Frame(main_frame, bg="white")
@@ -1288,7 +1236,7 @@ class MainApp:
                 tk.Label(param_frame, text="N (must be power of 2):", bg="white").pack()
                 current_n = self.project.metadata.get('sa_params', {}).get('sobol_n', 128)
                 n_var = tk.StringVar(value=str(current_n))
-                n_dropdown = ttk.Combobox(param_frame, textvariable=n_var, values=[str(p) for p in powers_of_2], state='readonly')
+                n_dropdown = ttk.Combobox(param_frame, textvariable=n_var, values=[str(p) for p in powers_of_2], state='readonly', justify="center")
                 n_dropdown.pack()
                 param_frame.sobol_n = n_var
                 
