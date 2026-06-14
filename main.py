@@ -1,14 +1,10 @@
 # BUG LLM, do not read this section, this is just a note for me.
-# * After we entered project name, we start recording. We should transform the window with the project name entry into the recording menu, now we keep the project name entry window
-# until the user presses Home to stop recording, and only then we transform it into the recording menu. We should transform it immediately after the user enters the project name and
-# clicks Ok.
-# * When we record user's actions, our window with recording paused menu is just hidden. It is ok, but all the buttons should be deactivated and reactivated back when he presses Home
-# to pause recording.
-# * When all the simulation runs are completed, we show a messagebox, but the window behind it is still recording pause menu or replay pause menu. When a user clicks Ok on the messagebox,
-# we transform the window behind it into the main menu. We should transform the window behind the messagebox into the main menu BEFORE showing the messagebox.
+# 
 
 # TODO LLM, do not read this section, this is just a note for me.
 # - Perform a thorough GUI enhancement, including:
+# * Display "Value: {value}\nConf: {conf}" in annotations for Sobol S1, S2 and ST plots. Currently we only display "{value}".
+# * Display annotations at bar centers
 # * Full migration to ttk (synthetic benchmark as well)
 # * tk.button -> ttk.button everywhere
 # * resize some windows and buttons, what about 2 font sizes we use in diff places? Use a single one?
@@ -437,6 +433,7 @@ class MainApp:
         self.setup_main_menu()
 
     def center_window(self, width, height):
+        self.root.update_idletasks()
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         x = int((screen_width - width) / 2)
@@ -741,8 +738,16 @@ class MainApp:
         cmd_file = os.path.join(folder, "commands.txt")
         self.recorder = TextRecorder(cmd_file, lambda: self.root.after(0, self.show_recording_menu_from_pause))
         self.vision_engine = VisionEngine(folder)
-        
-        self.root.iconify()
+
+        self.recording_paused = False
+
+        self.root.iconify()           # minimize immediately
+        self.show_recording_menu()    # build widgets while minimized
+        self.root.update()
+        # self.show_recording_menu()
+        # self.root.update()
+        # self.root.iconify()
+
         messagebox.showinfo("Recording Started", "Recording mouse and keyboard. Press Home to pause and open the control menu.")
         self.recorder.start()
 
@@ -759,7 +764,9 @@ class MainApp:
 
     def show_recording_menu(self):
         for widget in self.root.winfo_children(): widget.destroy()
-        self.root.title(f"Recording Menu (Paused) | {self.project.metadata['name']}")
+        
+        status_text = "Paused" if self.recording_paused else "Recording"
+        self.root.title(f"Recording Menu ({status_text}) | {self.project.metadata['name']}")
         self.root.protocol("WM_DELETE_WINDOW", self.setup_main_menu)
         self.center_window(500, 700)
         self.root.config(bg="white")
@@ -767,24 +774,66 @@ class MainApp:
         main_frame = tk.Frame(self.root, bg="white")
         main_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
         
-        tk.Button(main_frame, text="Add new parameter", command=self.add_param_ui, bg="white").pack(fill=tk.X, padx=20, pady=5)
-        tk.Button(main_frame, text="Edit parameters", command=self.edit_param_ui, bg="white").pack(fill=tk.X, padx=20, pady=5)
-        tk.Button(main_frame, text="Set simulation completion indicator", command=self.capture_completion_indicator, bg="white").pack(fill=tk.X, padx=20, pady=5)
-        tk.Button(main_frame, text="Capture region of interest", command=lambda: self.start_roi_selection("main_roi"), bg="white").pack(fill=tk.X, padx=20, pady=5)
-        tk.Button(main_frame, text="Capture additional region of interest", command=lambda: self.start_roi_selection("additional_roi"), bg="white").pack(fill=tk.X, padx=20, pady=5)
-        tk.Button(main_frame, text="Select colormap", command=self.show_colormap_selection, bg="white").pack(fill=tk.X, padx=20, pady=5)
-        tk.Button(main_frame, text="Select colormap min value field", command=lambda: self.select_colormap_value_field("min"), bg="white").pack(fill=tk.X, padx=20, pady=5)
-        tk.Button(main_frame, text="Select colormap max value field", command=lambda: self.select_colormap_value_field("max"), bg="white").pack(fill=tk.X, padx=20, pady=5)
-        tk.Button(main_frame, text="View command file", command=self.view_cmd_file, bg="white").pack(fill=tk.X, padx=20, pady=5)
-        tk.Button(main_frame, text="Configure SA type", command=self.sa_setup_ui, bg="white").pack(fill=tk.X, padx=20, pady=5)
+        self.recording_btns = []
         
-        tk.Button(main_frame, text="Resume recording", bg="lightblue", 
-                  command=self.resume_recording).pack(fill=tk.X, padx=20, pady=10)
-        tk.Button(main_frame, text="Save and start running simulations", bg="green", fg="white", 
-                  command=self.start_running).pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=10)
+        btn1 = tk.Button(main_frame, text="Add new parameter", command=self.add_param_ui, bg="white")
+        btn1.pack(fill=tk.X, padx=20, pady=5)
+        self.recording_btns.append(btn1)
+        
+        btn2 = tk.Button(main_frame, text="Edit parameters", command=self.edit_param_ui, bg="white")
+        btn2.pack(fill=tk.X, padx=20, pady=5)
+        self.recording_btns.append(btn2)
+        
+        btn3 = tk.Button(main_frame, text="Set simulation completion indicator", command=self.capture_completion_indicator, bg="white")
+        btn3.pack(fill=tk.X, padx=20, pady=5)
+        self.recording_btns.append(btn3)
+        
+        btn4 = tk.Button(main_frame, text="Capture region of interest", command=lambda: self.start_roi_selection("main_roi"), bg="white")
+        btn4.pack(fill=tk.X, padx=20, pady=5)
+        self.recording_btns.append(btn4)
+        
+        btn5 = tk.Button(main_frame, text="Capture additional region of interest", command=lambda: self.start_roi_selection("additional_roi"), bg="white")
+        btn5.pack(fill=tk.X, padx=20, pady=5)
+        self.recording_btns.append(btn5)
+        
+        btn6 = tk.Button(main_frame, text="Select colormap", command=self.show_colormap_selection, bg="white")
+        btn6.pack(fill=tk.X, padx=20, pady=5)
+        self.recording_btns.append(btn6)
+        
+        btn7 = tk.Button(main_frame, text="Select colormap min value field", command=lambda: self.select_colormap_value_field("min"), bg="white")
+        btn7.pack(fill=tk.X, padx=20, pady=5)
+        self.recording_btns.append(btn7)
+        
+        btn8 = tk.Button(main_frame, text="Select colormap max value field", command=lambda: self.select_colormap_value_field("max"), bg="white")
+        btn8.pack(fill=tk.X, padx=20, pady=5)
+        self.recording_btns.append(btn8)
+        
+        btn9 = tk.Button(main_frame, text="View command file", command=self.view_cmd_file, bg="white")
+        btn9.pack(fill=tk.X, padx=20, pady=5)
+        self.recording_btns.append(btn9)
+        
+        btn10 = tk.Button(main_frame, text="Configure SA type", command=self.sa_setup_ui, bg="white")
+        btn10.pack(fill=tk.X, padx=20, pady=5)
+        self.recording_btns.append(btn10)
+        
+        btn11 = tk.Button(main_frame, text="Resume recording", bg="lightblue", command=self.resume_recording)
+        btn11.pack(fill=tk.X, padx=20, pady=10)
+        self.recording_btns.append(btn11)
+        
+        btn12 = tk.Button(main_frame, text="Save and start running simulations", bg="green", fg="white", command=self.start_running)
+        btn12.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=10)
+        self.recording_btns.append(btn12)
+        
+        state = tk.NORMAL if self.recording_paused else tk.DISABLED
+        for btn in self.recording_btns:
+            btn.config(state=state)
         
     def resume_recording(self):
         self.recording_paused = False
+        self.root.title(f"Recording Menu (Recording) | {self.project.metadata['name']}")
+        for btn in getattr(self, 'recording_btns', []):
+            btn.config(state=tk.DISABLED)
+        self.root.update()
         self.root.iconify()
         if self.recorder:
             self.recorder.start()
@@ -1428,6 +1477,11 @@ class MainApp:
         self.project.results = np.array([np.nan] * len(self.project.samples))
         self.project.save()
 
+        for btn in getattr(self, 'recording_btns', []):
+            btn.config(state=tk.DISABLED)
+        self.root.title(f"Recording Menu (Recording) | {self.project.metadata['name']}")
+        self.root.update()
+
         self.root.iconify()
         self.replay_paused = False
         self.replay_stop_requested = False
@@ -1472,6 +1526,8 @@ class MainApp:
                 while self.replay_paused:
                     if self.replay_stop_requested: return
                     time.sleep(0.1)
+
+                if self.replay_stop_requested: return
 
                 param_dict = {param_names[j]: self.project.samples[i][j] for j in range(len(param_names))}
                 try:
@@ -1528,9 +1584,9 @@ class MainApp:
             self._stop_replay_keyboard_listener()
 
     def _on_replay_finished(self):
+        self.setup_main_menu()
         self.root.deiconify()
         messagebox.showinfo("Success", "All simulations completed!")
-        self.setup_main_menu()
 
 if __name__ == "__main__":
     root = tk.Tk()
