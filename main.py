@@ -1,12 +1,11 @@
 # BUG LLM, do not read this section, this is just a note for me.
-# - S1 and ST plots: bars are not colored properly: should be red if > 0, blue if < 0, just as the gradient barplot.
-# - S2 plot: force diagonal cells to have colormap-independent color: black or white.
 # - When I change parameter name from X to Y, I want to replace every instance of "enter value for X" to "enter value for Y" in the command file
 # - Parameter names are not editable now in the Edit parameters table (bug). Also when I click on the cell, the text input field (our editability imitation) pops up after some pause.
-# Can you speed it up? Earlier I think it was quicker.
+# Can you speed it up? Earlier I think it (input field popup) was quicker.
 # - If I go back to the main menu, in the main menu I still can sometime see the project's name in the gui window header.
 # Instead, the project metadata should be fully discarded and I should see "SA Automation" there, when I go to the main menu window.
-# - "X" button in the topright corner of each window where there is a Back or Cancel button should behave exactly like Back or Cancel. Now it sometimes closes all the project.
+# - "X" button in the topright corner of each window where there is a Back or Cancel button should behave exactly like Back or Cancel. Now it sometimes closes all the project
+# and returns me back to the main menu.
 
 # TODO LLM, do not read this section, this is just a note for me.
 # - Perform a thorough GUI enhancement, including:
@@ -20,6 +19,7 @@
 # to pause recording.
 # * When all the simulation runs are completed, we show a messagebox, but the window behind it is still recording pause menu or replay pause menu. When a user clicks Ok on the messagebox,
 # we transform the window behind it into the main menu. We should transform the window behind the messagebox into the main menu BEFORE showing the messagebox.
+# change the app taskbar icon to smth else :)
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -286,19 +286,15 @@ class SAViewer(ttk.Frame):
             self.plot_values = vals
             self.ax.set_title("Gradient Barplot")
             self.ax.set_xlabel("Partial Derivative")
-            max_abs = max(abs(v) for v in vals) if vals else 1
-            self.ax.set_xlim(-max_abs * 1.15, max_abs * 1.15)
             fig_width, fig_height = 6 * self.zoom_factor, max(2, len(names) * 0.3) * self.zoom_factor
 
         elif self.current_plot in ('S1', 'ST'):
             vals = self.Si[self.current_plot][::-1]
-            colors = ['green'] if self.current_plot == 'S1' else ['orange']
+            colors = ['skyblue'] if self.current_plot == 'S1' else ['violet']
             self.bars = self.ax.barh(names, vals, color=colors[0])
             self.plot_values = vals
             self.ax.set_title(f"{'First' if self.current_plot == 'S1' else 'Total'} Order Sobol Indices ({self.current_plot})")
             self.ax.set_xlabel(f"{self.current_plot}")
-            max_abs = max(abs(v) for v in vals) if len(vals) > 0 else 1
-            self.ax.set_xlim(-max_abs * 1.15, max_abs * 1.15)
             fig_width, fig_height = 6 * self.zoom_factor, max(2, len(names) * 0.3) * self.zoom_factor
 
         elif self.current_plot == 'S2':
@@ -310,7 +306,7 @@ class SAViewer(ttk.Frame):
             for i in range(n):
                 for j in range(n):
                     if i == j:
-                        self.plot_s2[i, j] = 0
+                        self.plot_s2[i, j] = np.nan
                         self.annot_s2[i][j] = "N/A"
                     elif j > i:
                         val = s2_data[i, j]
