@@ -1,12 +1,8 @@
 # BUG LLM, do not read this section, this is just a note for me.
-# Why are sobol confidences so different to the examples script?
+# Change the Set simulation completion indicator menu to 2 buttons 1 above another, size = button size in the pause menu.
 
 # TODO LLM, do not read this section, this is just a note for me.
-# - Perform a thorough GUI enhancement, including:
-# * Display "Value: {value}\nConf: {conf}" in annotations for Sobol S1, S2 and ST plots. Currently we only display "{value}".
-# * Display annotations at bar centers
-# * Full migration to ttk (synthetic benchmark as well)
-# * resize some windows and buttons, what about 2 font sizes we use in diff places? Use a single one?
+# * change default plot size for s1, st, s2, grad
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -662,18 +658,18 @@ class MainApp:
         for widget in self.root.winfo_children(): widget.destroy()
         self.root.title(f"Set Simulation Completion Indicator | {self.project.metadata['name']}")
         self.root.protocol("WM_DELETE_WINDOW", self.show_recording_menu)
-        self.center_window(400, 125)
+        self.center_window(400, 120)
         self.root.config(bg="white")
         
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, pady=20, padx=20)
             
         btn_frame = ttk.Frame(main_frame)
-        btn_frame.pack(pady=20)
-        ttk.Button(btn_frame, text="Timeout Only", command=self.show_timeout_only_input, width=15).pack(side=tk.LEFT, padx=10)
-        ttk.Button(btn_frame, text="Image + Timeout", command=lambda: self.start_roi_selection("completion_indicator"), width=15).pack(side=tk.LEFT, padx=10)
+        btn_frame.pack(pady=5)
+        ttk.Button(btn_frame, text="Timeout Only", command=self.show_timeout_only_input, width=20).pack(side=tk.LEFT, padx=10)
+        ttk.Button(btn_frame, text="Image + Timeout", command=lambda: self.start_roi_selection("completion_indicator"), width=20).pack(side=tk.LEFT, padx=15)
         
-        ttk.Button(main_frame, text="Back", command=self.show_recording_menu).pack(side=tk.BOTTOM, pady=10)
+        ttk.Button(main_frame, text="Back", width=20, command=self.show_recording_menu).pack(side=tk.BOTTOM, pady=5)
     
     def show_timeout_only_input(self):
         for widget in self.root.winfo_children(): widget.destroy()
@@ -685,10 +681,10 @@ class MainApp:
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, pady=20, padx=20)
         
-        ttk.Label(main_frame, text="Enter timeout in seconds:", font=("Arial", 11)).pack(pady=10)
+        ttk.Label(main_frame, text="Enter timeout in seconds:").pack(side=tk.LEFT)
         timeout_var = tk.StringVar(value="10.0")
-        timeout_entry = ttk.Entry(main_frame, textvariable=timeout_var, font=("Arial", 12))
-        timeout_entry.pack(pady=10, fill=tk.X)
+        timeout_entry = ttk.Entry(main_frame, textvariable=timeout_var, width=20)
+        timeout_entry.pack(side=tk.LEFT, padx=10, fill=tk.X)
         timeout_entry.focus()
         
         def on_confirm():
@@ -708,8 +704,8 @@ class MainApp:
         
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(side=tk.BOTTOM, pady=10)
-        ttk.Button(button_frame, text="Confirm", command=on_confirm).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Back", command=self.show_completion_indicator_choice).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Confirm", width=20, command=on_confirm).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Back", width=20, command=self.show_completion_indicator_choice).pack(side=tk.LEFT, padx=5)
         
         timeout_entry.bind("<Return>", lambda e: on_confirm())
 
@@ -858,30 +854,30 @@ class MainApp:
         for widget in self.root.winfo_children(): widget.destroy()
         self.root.title(f"Select Colormap | {self.project.metadata['name']}")
         self.root.protocol("WM_DELETE_WINDOW", self.show_recording_menu)
-        self.center_window(400, 150)
+        self.center_window(400, 100)
         self.root.config(bg="white")
 
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, pady=20, padx=20)
 
         cmap_frame = ttk.Frame(main_frame)
-        cmap_frame.pack(fill=tk.X, pady=10)
+        cmap_frame.pack(fill=tk.X, pady=0)
 
-        ttk.Label(cmap_frame, text="Choose colormap:", font=("Arial", 12)).pack(side=tk.LEFT)
+        ttk.Label(cmap_frame, text="Choose colormap:").pack(side=tk.LEFT)
         cmap_var = tk.StringVar(value=self.project.metadata.get('colormap').get('name', "viridis"))
         cmap_dropdown = ttk.Combobox(cmap_frame, textvariable=cmap_var, values=['viridis', 'turbo'], state='readonly')
         cmap_dropdown.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 0))
 
         button_frame = ttk.Frame(main_frame)
-        button_frame.pack(side=tk.BOTTOM, pady=15)
+        button_frame.pack(side=tk.BOTTOM, pady=0)
 
         def on_ok():
             self.project.metadata['colormap']['name'] = cmap_var.get()
             self.project.save()
             self.show_recording_menu()
 
-        ttk.Button(button_frame, text="Ok", command=on_ok, width=10).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=self.show_recording_menu, width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Ok", command=on_ok, width=20).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=self.show_recording_menu, width=20).pack(side=tk.LEFT, padx=5)
 
     def pause_replay(self):
         self.replay_paused = True
@@ -992,12 +988,10 @@ class MainApp:
         for widget in self.root.winfo_children(): widget.destroy()
         
         img_width, img_height = roi_image.size
-        scale = min(800 / img_width, 600 / img_height, 1.0)
-        display_width = int(img_width * scale)
-        display_height = int(img_height * scale)
-        
-        window_width = max(display_width + 40, 280)
-        window_height = display_height + (110 if self.roi_type == "completion_indicator" else 80)
+
+        window_width = max(img_width, 400) + 40
+        window_height = img_height + (120 if self.roi_type == "completion_indicator" else 90)
+
         self.root.title("Screenshot Preview")
         self.root.protocol("WM_DELETE_WINDOW", self.show_recording_menu)
         self.center_window(window_width, window_height)
@@ -1006,7 +1000,7 @@ class MainApp:
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
         
-        photo = ImageTk.PhotoImage(roi_image.resize((display_width, display_height)))
+        photo = ImageTk.PhotoImage(roi_image)
         label = tk.Label(main_frame, image=photo, bg="white")
         label.image = photo
         label.pack(pady=10)
@@ -1017,7 +1011,7 @@ class MainApp:
             t_frame = ttk.Frame(main_frame)
             t_frame.pack(pady=5)
             ttk.Label(t_frame, text="Timeout (seconds):").pack(side=tk.LEFT)
-            ttk.Entry(t_frame, textvariable=timeout_var, width=10).pack(side=tk.LEFT)
+            ttk.Entry(t_frame, textvariable=timeout_var, width=20).pack(side=tk.LEFT)
 
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(pady=10)
@@ -1039,9 +1033,9 @@ class MainApp:
             self.in_roi_preview = False
             self.show_recording_menu()
         
-        ttk.Button(button_frame, text="OK", command=on_ok, width=15).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Retake", command=on_retake, width=15).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Cancel", command=on_cancel, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="OK", command=on_ok, width=20).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Retake", command=on_retake, width=20).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=on_cancel, width=20).pack(side=tk.LEFT, padx=5)
 
     def save_roi(self, timeout=None):
         if self.roi_type == "completion_indicator":
@@ -1116,8 +1110,8 @@ class MainApp:
         
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=3, column=0, columnspan=2, pady=20)
-        ttk.Button(button_frame, text="Save", command=save, width=15).pack(side=tk.LEFT, padx=10)
-        ttk.Button(button_frame, text="Cancel", command=self.show_recording_menu, width=15).pack(side=tk.LEFT, padx=10)
+        ttk.Button(button_frame, text="Save", command=save, width=20).pack(side=tk.LEFT, padx=10)
+        ttk.Button(button_frame, text="Cancel", command=self.show_recording_menu, width=20).pack(side=tk.LEFT, padx=10)
 
     def edit_param_ui(self):
         for widget in self.root.winfo_children(): widget.destroy()
@@ -1134,7 +1128,7 @@ class MainApp:
         table_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=10)
 
         columns = ["Original Name", "Name", "Min", "Max"]
-        col_widths = {c: 225 for c in columns} # 1.5x wider columns
+        col_widths = {c: 200 for c in columns}
         self.param_tree = EditableTreeview(
             table_frame, 
             columns=columns, 
@@ -1266,7 +1260,7 @@ class MainApp:
         
         self.root.title("SA Setup")
         self.root.protocol("WM_DELETE_WINDOW", self.show_recording_menu)
-        self.center_window(1000, 550)
+        self.center_window(700, 500)
         self.root.config(bg="white")
         
         main_frame = ttk.Frame(self.root)
@@ -1314,7 +1308,8 @@ class MainApp:
                 table_frame.pack(fill=tk.BOTH, expand=True)
 
                 columns = ["Name", "Range", "Point", "Step"]
-                self.grad_tree = EditableTreeview(table_frame, columns=columns, editable_cols=[2, 3], tree_height=min(8, max(1, len(self.project.metadata['params']))), allow_delete=False, col_widths={"Range": 300})
+                self.grad_tree = EditableTreeview(table_frame, columns=columns, editable_cols=[2, 3], tree_height=min(8, max(1, len(self.project.metadata['params']))), allow_delete=False,
+                                                  col_widths={"Name": 125,"Range": 250, "Point": 125, "Step": 125})
                 self.grad_tree.pack(fill=tk.BOTH, expand=True)
                 
                 saved_grad_params = self.project.metadata.get('sa_params', {}) if self.project.metadata.get('sa_type') == 'Local Gradient Calculation' else {}
