@@ -6,9 +6,7 @@
 # * Display "Value: {value}\nConf: {conf}" in annotations for Sobol S1, S2 and ST plots. Currently we only display "{value}".
 # * Display annotations at bar centers
 # * Full migration to ttk (synthetic benchmark as well)
-# * tk.button -> ttk.button everywhere
 # * resize some windows and buttons, what about 2 font sizes we use in diff places? Use a single one?
-# * change the app taskbar icon to smth else :)
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -228,7 +226,7 @@ class SAViewer(ttk.Frame):
         zoom_frame.pack(side=tk.LEFT, padx=(20 if self.sa_type == 'Sobol Index' else 0))
         ttk.Button(zoom_frame, text="Zoom In", width=10, command=self.zoom_in).pack(side=tk.LEFT, padx=2)
         ttk.Button(zoom_frame, text="Zoom Out", width=10, command=self.zoom_out).pack(side=tk.LEFT, padx=2)
-        ttk.Button(zoom_frame, text="Reset", command=self.zoom_reset).pack(side=tk.LEFT, padx=2)
+        ttk.Button(zoom_frame, text="Reset", width=10, command=self.zoom_reset).pack(side=tk.LEFT, padx=2)
 
         self.canvas_frame = ttk.Frame(self)
         self.canvas_frame.pack(fill=tk.BOTH, expand=True)
@@ -553,8 +551,8 @@ class MainApp:
         info_frame = tk.Frame(main_frame, bg="white")
         info_frame.pack(fill=tk.X, pady=5)
         info_frame_text = (f"SA type: {self.project.metadata.get('sa_type', '-')}"
-                           f"{' (Including Second Order)' if self.project.metadata.get('sa_params', {}).get('calc_second_order', False) else ''}"
-                           "          "
+                           f"{' (including ' if self.project.metadata.get('sa_params', {}).get('calc_second_order', False) else ' (excluding '}"
+                           "second order)          "
                            f"Simulation runs performed: {self.project.metadata.get('n_completed')}/{self.project.metadata.get('n_required')}          "
                            f"Colormap: {self.project.metadata.get('colormap', {}).get('name', '-')}")
         tk.Label(info_frame, text=info_frame_text, bg="white").pack(side=tk.LEFT, padx=0)
@@ -588,7 +586,7 @@ class MainApp:
                 res_frame = tk.Frame(main_frame, bg="white")
                 res_frame.pack(fill=tk.BOTH, expand=True, pady=0)
                 tk.Label(res_frame, text="Sensitivity Analysis Results", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W, pady=(0, 0))
-                tk.Label(res_frame, text="Statistics Over Function Values", font=("Arial", 10), bg="white").pack(anchor=tk.W, pady=(0, 5))
+                tk.Label(res_frame, text="Statistics over function values", font=("Arial", 10), bg="white").pack(anchor=tk.W, pady=(0, 5))
 
                 plot_viewer = SAViewer(res_frame, self.project)
                 
@@ -861,8 +859,8 @@ class MainApp:
             self.project.save()
             self.show_recording_menu()
 
-        tk.Button(button_frame, text="Ok", command=on_ok, bg="lightgreen").pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
-        tk.Button(button_frame, text="Cancel", command=self.show_recording_menu, bg="lightcoral").pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+        tk.Button(button_frame, text="Ok", command=on_ok).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+        tk.Button(button_frame, text="Cancel", command=self.show_recording_menu).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
 
     def pause_replay(self):
         self.replay_paused = True
@@ -901,10 +899,10 @@ class MainApp:
         tk.Label(main_frame, text=f"Replay paused at sample {self.current_sample_index + 1} of {len(self.project.samples)}", 
                 bg="white", font=("Arial", 12)).pack(pady=20)
         
-        tk.Button(main_frame, text="Resume running simulations", bg="lightgreen", fg="white", 
+        tk.Button(main_frame, text="Resume running simulations", fg="white", 
                   command=self.resume_replay).pack(fill=tk.X, padx=20, pady=10)
         
-        tk.Button(main_frame, text="Stop and return to main menu", bg="lightcoral", fg="white", 
+        tk.Button(main_frame, text="Stop and return to main menu", fg="white", 
                   command=self.stop_replay).pack(fill=tk.X, padx=20, pady=10)
 
     def resume_replay(self):
@@ -1239,7 +1237,7 @@ class MainApp:
             except ValueError:
                 messagebox.showerror("Validation Error", "Min and Max values must be valid numbers")
         
-        tk.Button(actions_frame, text="Save Changes", bg="lightgreen", command=on_save_clicked).pack(side=tk.RIGHT, padx=5)
+        tk.Button(actions_frame, text="Save changes", command=on_save_clicked).pack(side=tk.RIGHT, padx=5)
         tk.Button(actions_frame, text="Back", bg="white", command=self.show_recording_menu).pack(side=tk.RIGHT, padx=5)
 
     def sa_setup_ui(self):
@@ -1590,5 +1588,7 @@ class MainApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
+    icon = tk.PhotoImage(file=r"gui-sa-automation\app_logo.png")
+    root.iconphoto(True, icon)
     app = MainApp(root)
     root.mainloop()

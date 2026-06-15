@@ -376,5 +376,7 @@ class BenchmarkApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
+    icon = tk.PhotoImage(file=r"gui-sa-automation\synthetic-benchmark\app_logo.png")
+    root.iconphoto(True, icon)
     app = BenchmarkApp(root)
     root.mainloop()
