@@ -1,5 +1,5 @@
 # BUG LLM, do not read this section, this is just a note for me.
-# 
+# Why are sobol confidences so different to the examples script?
 
 # TODO LLM, do not read this section, this is just a note for me.
 # - Perform a thorough GUI enhancement, including:
@@ -202,20 +202,20 @@ class SAViewer(ttk.Frame):
             self.Si = sobol_analyze(problem, scalars, calc_second_order=calc_second_order, print_to_console=False)
 
     def create_widgets(self):
-        top_bar = tk.Frame(self)
+        top_bar = ttk.Frame(self)
         top_bar.pack(fill=tk.X, pady=5)
 
-        btn_frame = tk.Frame(top_bar)
+        btn_frame = ttk.Frame(top_bar)
         btn_frame.pack(side=tk.LEFT)
         
         if self.sa_type == 'Sobol Index':
-            tk.Label(btn_frame, text="Plot type: ", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
+            ttk.Label(btn_frame, text="Plot type: ", font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
 
-            self.s1_btn = tk.Button(btn_frame, text="S1", width=5, command=lambda: self.switch_plot("S1"))
+            self.s1_btn = ttk.Button(btn_frame, text="S1", width=5, command=lambda: self.switch_plot("S1"))
             self.s1_btn.pack(side=tk.LEFT, padx=2)
-            self.st_btn = tk.Button(btn_frame, text="ST", width=5, command=lambda: self.switch_plot("ST"))
+            self.st_btn = ttk.Button(btn_frame, text="ST", width=5, command=lambda: self.switch_plot("ST"))
             self.st_btn.pack(side=tk.LEFT, padx=2)
-            self.s2_btn = tk.Button(btn_frame, text="S2", width=5, command=lambda: self.switch_plot("S2"))
+            self.s2_btn = ttk.Button(btn_frame, text="S2", width=5, command=lambda: self.switch_plot("S2"))
             self.s2_btn.pack(side=tk.LEFT, padx=2)
             
             calc_s2 = self.project.metadata.get('sa_params', {}).get('calc_second_order', False)
@@ -276,9 +276,10 @@ class SAViewer(ttk.Frame):
 
         elif self.current_plot in ('S1', 'ST'):
             vals = self.Si[self.current_plot][::-1]
+            confs = self.Si[f"{self.current_plot}_conf"][::-1]
             colors = ['skyblue'] if self.current_plot == 'S1' else ['violet']
             self.bars = self.ax.barh(names, vals, color=colors[0])
-            self.plot_values = vals
+            self.plot_values = list(zip(vals, confs))
             self.ax.set_title(f"{'First' if self.current_plot == 'S1' else 'Total'} Order Sobol Indices ({self.current_plot})")
             self.ax.set_xlabel(f"{self.current_plot}")
             fig_width, fig_height = 6 * self.zoom_factor, max(2, len(names) * 0.3) * self.zoom_factor
@@ -286,6 +287,7 @@ class SAViewer(ttk.Frame):
         elif self.current_plot == 'S2':
             n = len(self.param_names)
             s2_data = self.Si['S2']
+            s2_conf = self.Si['S2_conf']
             self.plot_s2 = np.zeros((n, n))
             self.annot_s2 = [["" for _ in range(n)] for _ in range(n)]
             
@@ -296,10 +298,11 @@ class SAViewer(ttk.Frame):
                         self.annot_s2[i][j] = "N/A"
                     elif j > i:
                         val = s2_data[i, j]
+                        conf = s2_conf[i, j]
                         self.plot_s2[i, j] = val
                         self.plot_s2[j, i] = val
-                        self.annot_s2[i][j] = f"{val}"
-                        self.annot_s2[j][i] = f"{val}"
+                        self.annot_s2[i][j] = (val, conf)
+                        self.annot_s2[j][i] = (val, conf)
                         
             self.im = self.ax.imshow(self.plot_s2, cmap='rainbow')
             self.colorbar = self.fig.colorbar(self.im, ax=self.ax)
@@ -359,11 +362,18 @@ class SAViewer(ttk.Frame):
         vis = self.annot.get_visible()
         if mock_event.inaxes == self.ax:
             if self.current_plot in ('Gradient', 'S1', 'ST'):
-                for bar, val in zip(self.bars, self.plot_values):
+                for bar, val_data in zip(self.bars, self.plot_values):
                     cont, _ = bar.contains(mock_event)
                     if cont:
-                        self.annot.xy = (0, bar.get_y() + bar.get_height() / 2)
-                        self.annot.set_text(f"{val}")
+                        # Place annotation at the bar center
+                        self.annot.xy = (bar.get_width() / 2, bar.get_y() + bar.get_height() / 2)
+                        
+                        if self.current_plot == 'Gradient':
+                            self.annot.set_text(f"{val_data}")
+                        else:
+                            val, conf = val_data
+                            self.annot.set_text(f"Value: {val}\nConf: {conf}")
+
                         self.annot.set_ha('center')
                         self.annot.set_visible(True)
                         if not vis or self.current_annot_text != self.annot.get_text():
@@ -375,16 +385,18 @@ class SAViewer(ttk.Frame):
                 x_data, y_data = inv.transform((mock_event.x, mock_event.y))
                 col, row = int(round(x_data)), int(round(y_data))
                 if 0 <= col < len(self.param_names) and 0 <= row < len(self.param_names):
-                    if self.annot_s2[row][col] != "N/A":
+                    data = self.annot_s2[row][col]
+                    if data != "N/A":
+                        val, conf = data
                         self.annot.xy = (col, row)
-                        self.annot.set_text(self.annot_s2[row][col])
+                        self.annot.set_text(f"Value: {val}\nConf: {conf}")
                         self.annot.set_ha('center')
                         self.annot.set_visible(True)
                         if not vis or self.current_annot_text != self.annot.get_text():
                             self.current_annot_text = self.annot.get_text()
                             self.render_canvas_image()
                         return
-                    elif self.annot_s2[row][col] == "N/A":
+                    elif data == "N/A":
                         self.annot.xy = (col, row)
                         self.annot.set_text("N/A")
                         self.annot.set_ha('center')
@@ -416,6 +428,17 @@ class MainApp:
     def __init__(self, root):
         self.root = root
         self.root.config(bg="white")
+        
+        # Apply ttk styles ("vista" theme + white backgrounds)
+        self.style = ttk.Style()
+        try:
+            self.style.theme_use("vista")
+        except tk.TclError:
+            pass
+        self.style.configure("TLabel", background="white")
+        self.style.configure("TFrame", background="white")
+        self.style.configure("TCheckbutton", background="white")
+        
         self.project = None
         self.recorder = None
         self.vision_engine = None
@@ -477,12 +500,12 @@ class MainApp:
         self.vision_engine = None
         self.root.protocol("WM_DELETE_WINDOW", self.quit_app)
 
-        self.center_window(500, 600)
-        main_frame = tk.Frame(self.root, bg="white")
+        self.center_window(500, 200)
+        main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True)
-        tk.Label(main_frame, text="Sensitivity Analysis Automation", font=("Arial", 14), bg="white").pack(pady=20)
-        tk.Button(main_frame, text="Start new SA", command=self.start_new_sa, width=20, bg="white").pack(pady=10)
-        tk.Button(main_frame, text="Open existing SA", command=self.open_existing_sa, width=20, bg="white").pack()
+        ttk.Label(main_frame, text="Sensitivity Analysis Automation", font=("Arial", 14)).pack(pady=20)
+        ttk.Button(main_frame, text="Start new SA", command=self.start_new_sa, width=30).pack(pady=10)
+        ttk.Button(main_frame, text="Open existing SA", command=self.open_existing_sa, width=30).pack()
 
     def open_existing_sa(self):
         folder = filedialog.askdirectory()
@@ -519,48 +542,46 @@ class MainApp:
         self.center_window(1100, 900)
         self.root.config(bg="white")
         
-        main_frame = tk.Frame(self.root, bg="white")
+        main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, pady=5, padx=5)
 
         # Top Bar containing Status and Additional ROI toggler
-        top_bar = tk.Frame(main_frame, bg="white")
+        top_bar = ttk.Frame(main_frame)
         top_bar.pack(fill=tk.X, pady=5)
         
         status_colors = {"Setup": "grey", "In progress": "orange", "Completed": "green"}
         status_color = status_colors.get(self.project.metadata['status'], 'black')
 
-        stat_frame = tk.Frame(top_bar, bg="white")
+        stat_frame = ttk.Frame(top_bar)
         stat_frame.pack(side=tk.LEFT)
-        tk.Label(stat_frame, text="Status:", font=("Arial", 10, "bold"), fg="black", bg="white").pack(side=tk.LEFT)
-        tk.Label(stat_frame, text=self.project.metadata['status'], font=("Arial", 10, "bold"), fg=status_color, bg="white").pack(side=tk.LEFT)
+        ttk.Label(stat_frame, text="Status:", font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+        ttk.Label(stat_frame, text=self.project.metadata['status'], font=("Arial", 10, "bold"), foreground=status_color).pack(side=tk.LEFT)
         
         if self.project.metadata['status'] == "Setup":
-            tk.Button(stat_frame, text="Continue recording actions", bg="lightblue",
-                      command=self.continue_recording_actions).pack(side=tk.LEFT, padx=10)
+            ttk.Button(stat_frame, text="Continue recording actions", command=self.continue_recording_actions).pack(side=tk.LEFT, padx=10)
         elif self.project.metadata['status'] == "In progress":
-            tk.Button(stat_frame, text="Continue simulation runs", bg="lightblue",
-                      command=self.resume_sims).pack(side=tk.LEFT, padx=10)
+            ttk.Button(stat_frame, text="Continue simulation runs", command=self.resume_sims).pack(side=tk.LEFT, padx=10)
 
-        roi_frame = tk.Frame(top_bar, bg="white")
+        roi_frame = ttk.Frame(top_bar)
         roi_frame.pack(side=tk.RIGHT)
-        tk.Label(roi_frame, text=f"Additional ROI status: {self.project.metadata['additional_roi_status']}", bg="white").pack(side=tk.LEFT)
+        ttk.Label(roi_frame, text=f"Additional ROI status: {self.project.metadata['additional_roi_status']}").pack(side=tk.LEFT)
         btn_text = "Stop capturing" if self.project.metadata['additional_roi_status'] == "capturing" else "Resume capturing"
-        tk.Button(roi_frame, text=btn_text, bg="white", command=self.toggle_additional_roi).pack(side=tk.LEFT, padx=10)
+        ttk.Button(roi_frame, text=btn_text, command=self.toggle_additional_roi).pack(side=tk.LEFT, padx=10)
         
         # Info frame
-        info_frame = tk.Frame(main_frame, bg="white")
+        info_frame = ttk.Frame(main_frame)
         info_frame.pack(fill=tk.X, pady=5)
         info_frame_text = (f"SA type: {self.project.metadata.get('sa_type', '-')}"
                            f"{' (including ' if self.project.metadata.get('sa_params', {}).get('calc_second_order', False) else ' (excluding '}"
                            "second order)          "
                            f"Simulation runs performed: {self.project.metadata.get('n_completed')}/{self.project.metadata.get('n_required')}          "
                            f"Colormap: {self.project.metadata.get('colormap', {}).get('name', '-')}")
-        tk.Label(info_frame, text=info_frame_text, bg="white").pack(side=tk.LEFT, padx=0)
+        ttk.Label(info_frame, text=info_frame_text).pack(side=tk.LEFT, padx=0)
         
         # Parameter Table
-        table_frame = tk.Frame(main_frame, bg="white")
+        table_frame = ttk.Frame(main_frame)
         table_frame.pack(fill=tk.X, pady=10)
-        tk.Label(table_frame, text="Parameter Settings Used in This SA", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W, padx=0, pady=0)
+        ttk.Label(table_frame, text="Parameter Settings", font=("Arial", 10, "bold")).pack(anchor=tk.W, padx=0, pady=0)
         
         sa_type = self.project.metadata.get('sa_type', '')
         headers = ["Name", "Range"]
@@ -581,12 +602,12 @@ class MainApp:
         # Embedded Results
         if self.project.metadata['status'] == "Completed":
             if np.any(np.isnan(self.project.results)):
-                tk.Label(main_frame, text="Simulation runs contain NaN results. Cannot generate SA report.", fg="red", bg="white").pack(pady=10)
+                ttk.Label(main_frame, text="Simulation runs contain NaN results. Cannot generate SA report.", foreground="red").pack(pady=10)
             else:
-                res_frame = tk.Frame(main_frame, bg="white")
+                res_frame = ttk.Frame(main_frame)
                 res_frame.pack(fill=tk.BOTH, expand=True, pady=0)
-                tk.Label(res_frame, text="Sensitivity Analysis Results", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W, pady=(0, 0))
-                tk.Label(res_frame, text="Statistics over function values", font=("Arial", 10), bg="white").pack(anchor=tk.W, pady=(0, 5))
+                ttk.Label(res_frame, text="Sensitivity Analysis Results", font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(0, 0))
+                ttk.Label(res_frame, text="Statistics over function values", font=("Arial", 10)).pack(anchor=tk.W, pady=(0, 5))
 
                 plot_viewer = SAViewer(res_frame, self.project)
                 
@@ -644,15 +665,15 @@ class MainApp:
         self.center_window(400, 125)
         self.root.config(bg="white")
         
-        main_frame = tk.Frame(self.root, bg="white")
+        main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, pady=20, padx=20)
             
-        btn_frame = tk.Frame(main_frame, bg="white")
+        btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(pady=20)
-        tk.Button(btn_frame, text="Timeout Only", command=self.show_timeout_only_input, bg="white", width=15).pack(side=tk.LEFT, padx=10)
-        tk.Button(btn_frame, text="Image + Timeout", command=lambda: self.start_roi_selection("completion_indicator"), bg="white", width=15).pack(side=tk.LEFT, padx=10)
+        ttk.Button(btn_frame, text="Timeout Only", command=self.show_timeout_only_input, width=15).pack(side=tk.LEFT, padx=10)
+        ttk.Button(btn_frame, text="Image + Timeout", command=lambda: self.start_roi_selection("completion_indicator"), width=15).pack(side=tk.LEFT, padx=10)
         
-        tk.Button(main_frame, text="Back", command=self.show_recording_menu, bg="white").pack(side=tk.BOTTOM, pady=10)
+        ttk.Button(main_frame, text="Back", command=self.show_recording_menu).pack(side=tk.BOTTOM, pady=10)
     
     def show_timeout_only_input(self):
         for widget in self.root.winfo_children(): widget.destroy()
@@ -661,12 +682,12 @@ class MainApp:
         self.center_window(400, 200)
         self.root.config(bg="white")
         
-        main_frame = tk.Frame(self.root, bg="white")
+        main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, pady=20, padx=20)
         
-        tk.Label(main_frame, text="Enter timeout in seconds:", font=("Arial", 11), bg="white").pack(pady=10)
+        ttk.Label(main_frame, text="Enter timeout in seconds:", font=("Arial", 11)).pack(pady=10)
         timeout_var = tk.StringVar(value="10.0")
-        timeout_entry = tk.Entry(main_frame, textvariable=timeout_var, font=("Arial", 12), bg="white")
+        timeout_entry = ttk.Entry(main_frame, textvariable=timeout_var, font=("Arial", 12))
         timeout_entry.pack(pady=10, fill=tk.X)
         timeout_entry.focus()
         
@@ -685,10 +706,10 @@ class MainApp:
             except ValueError:
                 messagebox.showerror("Error", "Please enter a valid number")
         
-        button_frame = tk.Frame(main_frame, bg="white")
+        button_frame = ttk.Frame(main_frame)
         button_frame.pack(side=tk.BOTTOM, pady=10)
-        tk.Button(button_frame, text="Confirm", command=on_confirm, bg="white").pack(side=tk.LEFT, padx=5)
-        tk.Button(button_frame, text="Back", command=self.show_completion_indicator_choice, bg="white").pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Confirm", command=on_confirm).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Back", command=self.show_completion_indicator_choice).pack(side=tk.LEFT, padx=5)
         
         timeout_entry.bind("<Return>", lambda e: on_confirm())
 
@@ -708,11 +729,11 @@ class MainApp:
         self.center_window(400, 200)
         self.root.config(bg="white")
         
-        main_frame = tk.Frame(self.root, bg="white")
+        main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, pady=20, padx=20)
         
-        tk.Label(main_frame, text="Enter project name:", bg="white", font=("Arial", 12)).pack(pady=10)
-        name_entry = tk.Entry(main_frame, font=("Arial", 12), bg="white")
+        ttk.Label(main_frame, text="Enter project name:", font=("Arial", 12)).pack(pady=10)
+        name_entry = ttk.Entry(main_frame, font=("Arial", 12))
         name_entry.pack(pady=10, fill=tk.X)
         name_entry.focus()
         
@@ -723,9 +744,9 @@ class MainApp:
                 return
             self.proceed_with_recording(folder, name)
         
-        button_frame = tk.Frame(main_frame, bg="white")
+        button_frame = ttk.Frame(main_frame)
         button_frame.pack(pady=10)
-        tk.Button(button_frame, text="OK", command=confirm_name, bg="white").pack()
+        ttk.Button(button_frame, text="OK", command=confirm_name, width=30).pack()
         name_entry.bind("<Return>", lambda e: confirm_name())
 
     def proceed_with_recording(self, folder, project_name):
@@ -742,9 +763,6 @@ class MainApp:
         self.root.iconify()           # minimize immediately
         self.show_recording_menu()    # build widgets while minimized
         self.root.update()
-        # self.show_recording_menu()
-        # self.root.update()
-        # self.root.iconify()
 
         messagebox.showinfo("Recording Started", "Recording mouse and keyboard. Press Home to pause and open the control menu.")
         self.recorder.start()
@@ -766,63 +784,63 @@ class MainApp:
         status_text = "Paused" if self.recording_paused else "Recording"
         self.root.title(f"Recording Menu ({status_text}) | {self.project.metadata['name']}")
         self.root.protocol("WM_DELETE_WINDOW", self.setup_main_menu)
-        self.center_window(500, 700)
+        self.center_window(500, 600)
         self.root.config(bg="white")
         
-        main_frame = tk.Frame(self.root, bg="white")
+        main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
         
         self.recording_btns = []
         
-        btn1 = tk.Button(main_frame, text="Add new parameter", command=self.add_param_ui, bg="white")
+        btn1 = ttk.Button(main_frame, text="Add new parameter", command=self.add_param_ui)
         btn1.pack(fill=tk.X, padx=20, pady=5)
         self.recording_btns.append(btn1)
         
-        btn2 = tk.Button(main_frame, text="Edit parameters", command=self.edit_param_ui, bg="white")
+        btn2 = ttk.Button(main_frame, text="Edit parameters", command=self.edit_param_ui)
         btn2.pack(fill=tk.X, padx=20, pady=5)
         self.recording_btns.append(btn2)
         
-        btn3 = tk.Button(main_frame, text="Set simulation completion indicator", command=self.capture_completion_indicator, bg="white")
+        btn3 = ttk.Button(main_frame, text="Set simulation completion indicator", command=self.capture_completion_indicator)
         btn3.pack(fill=tk.X, padx=20, pady=5)
         self.recording_btns.append(btn3)
         
-        btn4 = tk.Button(main_frame, text="Capture region of interest", command=lambda: self.start_roi_selection("main_roi"), bg="white")
+        btn4 = ttk.Button(main_frame, text="Capture region of interest", command=lambda: self.start_roi_selection("main_roi"))
         btn4.pack(fill=tk.X, padx=20, pady=5)
         self.recording_btns.append(btn4)
         
-        btn5 = tk.Button(main_frame, text="Capture additional region of interest", command=lambda: self.start_roi_selection("additional_roi"), bg="white")
+        btn5 = ttk.Button(main_frame, text="Capture additional region of interest", command=lambda: self.start_roi_selection("additional_roi"))
         btn5.pack(fill=tk.X, padx=20, pady=5)
         self.recording_btns.append(btn5)
         
-        btn6 = tk.Button(main_frame, text="Select colormap", command=self.show_colormap_selection, bg="white")
+        btn6 = ttk.Button(main_frame, text="Select colormap", command=self.show_colormap_selection)
         btn6.pack(fill=tk.X, padx=20, pady=5)
         self.recording_btns.append(btn6)
         
-        btn7 = tk.Button(main_frame, text="Select colormap min value field", command=lambda: self.select_colormap_value_field("min"), bg="white")
+        btn7 = ttk.Button(main_frame, text="Select colormap min value field", command=lambda: self.select_colormap_value_field("min"))
         btn7.pack(fill=tk.X, padx=20, pady=5)
         self.recording_btns.append(btn7)
         
-        btn8 = tk.Button(main_frame, text="Select colormap max value field", command=lambda: self.select_colormap_value_field("max"), bg="white")
+        btn8 = ttk.Button(main_frame, text="Select colormap max value field", command=lambda: self.select_colormap_value_field("max"))
         btn8.pack(fill=tk.X, padx=20, pady=5)
         self.recording_btns.append(btn8)
         
-        btn9 = tk.Button(main_frame, text="View command file", command=self.view_cmd_file, bg="white")
+        btn9 = ttk.Button(main_frame, text="View command file", command=self.view_cmd_file)
         btn9.pack(fill=tk.X, padx=20, pady=5)
         self.recording_btns.append(btn9)
         
-        btn10 = tk.Button(main_frame, text="Configure SA type", command=self.sa_setup_ui, bg="white")
+        btn10 = ttk.Button(main_frame, text="Configure SA type", command=self.sa_setup_ui)
         btn10.pack(fill=tk.X, padx=20, pady=5)
         self.recording_btns.append(btn10)
         
-        btn11 = tk.Button(main_frame, text="Resume recording", bg="lightblue", command=self.resume_recording)
-        btn11.pack(fill=tk.X, padx=20, pady=10)
+        btn11 = ttk.Button(main_frame, text="Resume recording", command=self.resume_recording)
+        btn11.pack(fill=tk.X, padx=20, pady=(20, 5))
         self.recording_btns.append(btn11)
         
-        btn12 = tk.Button(main_frame, text="Save and start running simulations", bg="green", fg="white", command=self.start_running)
-        btn12.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=10)
+        btn12 = ttk.Button(main_frame, text="Save and start running simulations", command=self.start_running)
+        btn12.pack(fill=tk.X, padx=20, pady=(145, 5))
         self.recording_btns.append(btn12)
         
-        state = tk.NORMAL if self.recording_paused else tk.DISABLED
+        state = "normal" if self.recording_paused else "disabled"
         for btn in self.recording_btns:
             btn.config(state=state)
         
@@ -830,7 +848,7 @@ class MainApp:
         self.recording_paused = False
         self.root.title(f"Recording Menu (Recording) | {self.project.metadata['name']}")
         for btn in getattr(self, 'recording_btns', []):
-            btn.config(state=tk.DISABLED)
+            btn.config(state="disabled")
         self.root.update()
         self.root.iconify()
         if self.recorder:
@@ -840,27 +858,30 @@ class MainApp:
         for widget in self.root.winfo_children(): widget.destroy()
         self.root.title(f"Select Colormap | {self.project.metadata['name']}")
         self.root.protocol("WM_DELETE_WINDOW", self.show_recording_menu)
-        self.center_window(400, 180)
+        self.center_window(400, 150)
         self.root.config(bg="white")
 
-        main_frame = tk.Frame(self.root, bg="white")
+        main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, pady=20, padx=20)
 
-        tk.Label(main_frame, text="Choose colormap:", font=("Arial", 12), bg="white").pack(anchor=tk.W, pady=(0, 10))
-        cmap_var = tk.StringVar(value=self.project.metadata.get('colormap').get('name', "viridis"))
-        cmap_dropdown = ttk.Combobox(main_frame, textvariable=cmap_var, values=['viridis', 'turbo'], state='readonly', width=20)
-        cmap_dropdown.pack(fill=tk.X, pady=5)
+        cmap_frame = ttk.Frame(main_frame)
+        cmap_frame.pack(fill=tk.X, pady=10)
 
-        button_frame = tk.Frame(main_frame, bg="white")
-        button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=15)
+        ttk.Label(cmap_frame, text="Choose colormap:", font=("Arial", 12)).pack(side=tk.LEFT)
+        cmap_var = tk.StringVar(value=self.project.metadata.get('colormap').get('name', "viridis"))
+        cmap_dropdown = ttk.Combobox(cmap_frame, textvariable=cmap_var, values=['viridis', 'turbo'], state='readonly')
+        cmap_dropdown.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 0))
+
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(side=tk.BOTTOM, pady=15)
 
         def on_ok():
             self.project.metadata['colormap']['name'] = cmap_var.get()
             self.project.save()
             self.show_recording_menu()
 
-        tk.Button(button_frame, text="Ok", command=on_ok).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
-        tk.Button(button_frame, text="Cancel", command=self.show_recording_menu).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+        ttk.Button(button_frame, text="Ok", command=on_ok, width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=self.show_recording_menu, width=10).pack(side=tk.LEFT, padx=5)
 
     def pause_replay(self):
         self.replay_paused = True
@@ -893,17 +914,15 @@ class MainApp:
         self.center_window(500, 200)
         self.root.config(bg="white")
         
-        main_frame = tk.Frame(self.root, bg="white")
+        main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
         
-        tk.Label(main_frame, text=f"Replay paused at sample {self.current_sample_index + 1} of {len(self.project.samples)}", 
-                bg="white", font=("Arial", 12)).pack(pady=20)
+        ttk.Label(main_frame, text=f"Replay paused at sample {self.current_sample_index + 1} of {len(self.project.samples)}", 
+                font=("Arial", 12)).pack(pady=20)
         
-        tk.Button(main_frame, text="Resume running simulations", fg="white", 
-                  command=self.resume_replay).pack(fill=tk.X, padx=20, pady=10)
+        ttk.Button(main_frame, text="Resume running simulations", command=self.resume_replay).pack(fill=tk.X, padx=20, pady=10)
         
-        tk.Button(main_frame, text="Stop and return to main menu", fg="white", 
-                  command=self.stop_replay).pack(fill=tk.X, padx=20, pady=10)
+        ttk.Button(main_frame, text="Stop and return to main menu", command=self.stop_replay).pack(fill=tk.X, padx=20, pady=10)
 
     def resume_replay(self):
         self.replay_paused = False
@@ -978,13 +997,13 @@ class MainApp:
         display_height = int(img_height * scale)
         
         window_width = max(display_width + 40, 280)
-        window_height = display_height + 140
+        window_height = display_height + (110 if self.roi_type == "completion_indicator" else 80)
         self.root.title("Screenshot Preview")
         self.root.protocol("WM_DELETE_WINDOW", self.show_recording_menu)
         self.center_window(window_width, window_height)
         self.root.config(bg="white")
         
-        main_frame = tk.Frame(self.root, bg="white")
+        main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
         
         photo = ImageTk.PhotoImage(roi_image.resize((display_width, display_height)))
@@ -995,12 +1014,12 @@ class MainApp:
         # Add timeout input if it's the completion indicator
         timeout_var = tk.StringVar(value="10.0")
         if self.roi_type == "completion_indicator":
-            t_frame = tk.Frame(main_frame, bg="white")
+            t_frame = ttk.Frame(main_frame)
             t_frame.pack(pady=5)
-            tk.Label(t_frame, text="Timeout (seconds):", bg="white").pack(side=tk.LEFT)
-            tk.Entry(t_frame, textvariable=timeout_var, width=10).pack(side=tk.LEFT)
+            ttk.Label(t_frame, text="Timeout (seconds):").pack(side=tk.LEFT)
+            ttk.Entry(t_frame, textvariable=timeout_var, width=10).pack(side=tk.LEFT)
 
-        button_frame = tk.Frame(main_frame, bg="white")
+        button_frame = ttk.Frame(main_frame)
         button_frame.pack(pady=10)
         
         def on_ok():
@@ -1020,9 +1039,9 @@ class MainApp:
             self.in_roi_preview = False
             self.show_recording_menu()
         
-        tk.Button(button_frame, text="OK", bg="white", command=on_ok).pack(side=tk.LEFT, padx=5)
-        tk.Button(button_frame, text="Retake", bg="white", command=on_retake).pack(side=tk.LEFT, padx=5)
-        tk.Button(button_frame, text="Cancel", bg="white", command=on_cancel).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="OK", command=on_ok, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Retake", command=on_retake, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=on_cancel, width=15).pack(side=tk.LEFT, padx=5)
 
     def save_roi(self, timeout=None):
         if self.roi_type == "completion_indicator":
@@ -1058,22 +1077,22 @@ class MainApp:
         
         self.root.title("Add New Parameter")
         self.root.protocol("WM_DELETE_WINDOW", self.show_recording_menu)
-        self.center_window(400, 300)
+        self.center_window(400, 180)
         self.root.config(bg="white")
         
-        main_frame = tk.Frame(self.root, bg="white")
+        main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, pady=20, padx=20)
         
-        tk.Label(main_frame, text="Name:", bg="white").grid(row=0, column=0, sticky=tk.W, pady=5)
-        name_ent = tk.Entry(main_frame, bg="white")
+        ttk.Label(main_frame, text="Name:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        name_ent = ttk.Entry(main_frame)
         name_ent.grid(row=0, column=1, sticky=tk.EW, pady=5, padx=10)
         
-        tk.Label(main_frame, text="Min:", bg="white").grid(row=1, column=0, sticky=tk.W, pady=5)
-        min_ent = tk.Entry(main_frame, bg="white")
+        ttk.Label(main_frame, text="Min:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        min_ent = ttk.Entry(main_frame)
         min_ent.grid(row=1, column=1, sticky=tk.EW, pady=5, padx=10)
         
-        tk.Label(main_frame, text="Max:", bg="white").grid(row=2, column=0, sticky=tk.W, pady=5)
-        max_ent = tk.Entry(main_frame, bg="white")
+        ttk.Label(main_frame, text="Max:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        max_ent = ttk.Entry(main_frame)
         max_ent.grid(row=2, column=1, sticky=tk.EW, pady=5, padx=10)
 
         main_frame.columnconfigure(1, weight=1)
@@ -1095,10 +1114,10 @@ class MainApp:
             except ValueError:
                 messagebox.showerror("Error", "Invalid float or Min >= Max")
         
-        button_frame = tk.Frame(main_frame, bg="white")
+        button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=3, column=0, columnspan=2, pady=20)
-        tk.Button(button_frame, text="Save", command=save, bg="white").pack(side=tk.LEFT, padx=10)
-        tk.Button(button_frame, text="Cancel", command=self.show_recording_menu, bg="white").pack(side=tk.LEFT, padx=10)
+        ttk.Button(button_frame, text="Save", command=save, width=15).pack(side=tk.LEFT, padx=10)
+        ttk.Button(button_frame, text="Cancel", command=self.show_recording_menu, width=15).pack(side=tk.LEFT, padx=10)
 
     def edit_param_ui(self):
         for widget in self.root.winfo_children(): widget.destroy()
@@ -1107,20 +1126,22 @@ class MainApp:
         self.center_window(700, 500)
         self.root.config(bg="white")
         
-        main_frame = tk.Frame(self.root, bg="white")
+        main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
-        tk.Label(main_frame, text="Parameter Settings", font=("Arial", 10, "bold"), bg="white").pack(anchor=tk.W, pady=10)
+        ttk.Label(main_frame, text="Parameter Settings", font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=10)
         
-        table_frame = tk.Frame(main_frame, bg="white", relief=tk.SUNKEN, borderwidth=1)
+        table_frame = ttk.Frame(main_frame, relief=tk.SUNKEN, borderwidth=1)
         table_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=10)
 
         columns = ["Original Name", "Name", "Min", "Max"]
+        col_widths = {c: 225 for c in columns} # 1.5x wider columns
         self.param_tree = EditableTreeview(
             table_frame, 
             columns=columns, 
             display_columns=["Name", "Min", "Max"], 
             editable_cols=[0, 1, 2], 
             tree_height=min(10, max(1, len(self.project.metadata['params']))), 
+            col_widths=col_widths,
             allow_delete=True
         )
         self.param_tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -1130,8 +1151,8 @@ class MainApp:
             data.append([p_name, p_name, bounds['min'], bounds['max']])
         self.param_tree.populate(data)
 
-        actions_frame = tk.Frame(main_frame, bg="white")
-        actions_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
+        actions_frame = ttk.Frame(main_frame)
+        actions_frame.pack(side=tk.BOTTOM, pady=10)
 
         def on_save_clicked():
             self.param_tree.commit_editor()
@@ -1237,28 +1258,28 @@ class MainApp:
             except ValueError:
                 messagebox.showerror("Validation Error", "Min and Max values must be valid numbers")
         
-        tk.Button(actions_frame, text="Save changes", command=on_save_clicked).pack(side=tk.RIGHT, padx=5)
-        tk.Button(actions_frame, text="Back", bg="white", command=self.show_recording_menu).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(actions_frame, text="Save changes", command=on_save_clicked, width=20).pack(side=tk.LEFT, padx=5)
+        ttk.Button(actions_frame, text="Back", command=self.show_recording_menu, width=20).pack(side=tk.LEFT, padx=5)
 
     def sa_setup_ui(self):
         for widget in self.root.winfo_children(): widget.destroy()
         
         self.root.title("SA Setup")
         self.root.protocol("WM_DELETE_WINDOW", self.show_recording_menu)
-        self.center_window(500, 550)
+        self.center_window(1000, 550)
         self.root.config(bg="white")
         
-        main_frame = tk.Frame(self.root, bg="white")
+        main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, pady=20, padx=20)
         
-        tk.Label(main_frame, text="SA Type:", font=("Arial", 10, "bold"), bg="white").pack(pady=10)
+        ttk.Label(main_frame, text="SA Type:", font=("Arial", 10, "bold")).pack(pady=10)
         type_var = tk.StringVar(value=self.project.metadata.get('sa_type', ''))
         
         sa_types = ['Sobol Index', 'Local Gradient Calculation']
         cb = ttk.Combobox(main_frame, textvariable=type_var, values=sa_types, state='readonly')
         cb.pack(pady=10, fill=tk.X)
         
-        param_frame = tk.Frame(main_frame, bg="white")
+        param_frame = ttk.Frame(main_frame)
         param_frame.pack(fill=tk.BOTH, expand=True, pady=10)
         
         def on_select(event):
@@ -1271,7 +1292,7 @@ class MainApp:
                     type_var.set('')
                     return
                 powers_of_2 = [2**i for i in range(2, 13)]
-                tk.Label(param_frame, text="N (must be power of 2):", bg="white").pack()
+                ttk.Label(param_frame, text="N (must be power of 2):").pack()
                 current_n = self.project.metadata.get('sa_params', {}).get('sobol_n', 128)
                 n_var = tk.StringVar(value=str(current_n))
                 n_dropdown = ttk.Combobox(param_frame, textvariable=n_var, values=[str(p) for p in powers_of_2], state='readonly')
@@ -1280,7 +1301,7 @@ class MainApp:
                 
                 calc_second_order_default = self.project.metadata.get('sa_params', {}).get('calc_second_order', False)
                 calc_second_order_var = tk.BooleanVar(value=calc_second_order_default)
-                second_order_cb = tk.Checkbutton(param_frame, text="Calculate second order indices", variable=calc_second_order_var, bg="white")
+                second_order_cb = ttk.Checkbutton(param_frame, text="Calculate second order indices", variable=calc_second_order_var)
                 second_order_cb.pack(anchor=tk.W, pady=10)
                 param_frame.calc_second_order = calc_second_order_var
             elif sa_type == 'Local Gradient Calculation':
@@ -1288,8 +1309,8 @@ class MainApp:
                     messagebox.showerror("Error", "Local Gradient Calculation requires at least 1 parameter. Please add parameters first.")
                     type_var.set('')
                     return
-                tk.Label(param_frame, text="Parameter settings", bg="white", font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=10)
-                table_frame = tk.Frame(param_frame, bg="white")
+                ttk.Label(param_frame, text="Parameter settings", font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=10)
+                table_frame = ttk.Frame(param_frame)
                 table_frame.pack(fill=tk.BOTH, expand=True)
 
                 columns = ["Name", "Range", "Point", "Step"]
@@ -1308,16 +1329,16 @@ class MainApp:
         cb.bind("<<ComboboxSelected>>", on_select)
         if type_var.get(): on_select(None)
         
-        info_frame = tk.Frame(main_frame, bg="white")
+        info_frame = ttk.Frame(main_frame)
         info_frame.pack(fill=tk.X, pady=10)
-        tk.Label(info_frame, text=f"Number of simulation runs required: {self.project.metadata.get('n_required')}", bg="white").pack()
+        ttk.Label(info_frame, text=f"Number of simulation runs required: {self.project.metadata.get('n_required')}").pack()
         
-        button_frame = tk.Frame(main_frame, bg="white")
+        button_frame = ttk.Frame(main_frame)
         button_frame.pack(side=tk.BOTTOM, pady=10)
         
         def generate_samples(): self.generate_samples(type_var.get(), param_frame)
-        tk.Button(button_frame, text="Generate sample", bg="white", command=generate_samples).pack(side=tk.LEFT, padx=5)
-        tk.Button(button_frame, text="Back", bg="white", command=self.show_recording_menu).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Generate sample", command=generate_samples, width=20).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Back", command=self.show_recording_menu, width=20).pack(side=tk.LEFT, padx=5)
 
     def generate_samples(self, sa_type, frame):
         try:
@@ -1476,7 +1497,7 @@ class MainApp:
         self.project.save()
 
         for btn in getattr(self, 'recording_btns', []):
-            btn.config(state=tk.DISABLED)
+            btn.config(state="disabled")
         self.root.title(f"Recording Menu (Recording) | {self.project.metadata['name']}")
         self.root.update()
 
