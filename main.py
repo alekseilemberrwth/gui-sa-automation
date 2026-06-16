@@ -1,8 +1,8 @@
 # BUG LLM, do not read this section, this is just a note for me.
-# Change the Set simulation completion indicator menu to 2 buttons 1 above another, size = button size in the pause menu.
+#
 
 # TODO LLM, do not read this section, this is just a note for me.
-# * change default plot size for s1, st, s2, grad
+# Add errorbars to Grad barplot, add 2nd line of the annotation: ± {error}. ± 1.384
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -263,22 +263,22 @@ class SAViewer(ttk.Frame):
 
         if self.current_plot == 'Gradient':
             vals = self.gradients[::-1]
-            colors = ['red' if v >= 0 else 'blue' for v in vals]
+            colors = ['lightcoral' if v >= 0 else 'skyblue' for v in vals]
             self.bars = self.ax.barh(names, vals, color=colors)
             self.plot_values = vals
             self.ax.set_title("Gradient Barplot")
             self.ax.set_xlabel("Partial Derivative")
-            fig_width, fig_height = 6 * self.zoom_factor, max(2, len(names) * 0.3) * self.zoom_factor
+            fig_width, fig_height = 8 * self.zoom_factor, max(4, len(names) * 0.9) * self.zoom_factor
 
         elif self.current_plot in ('S1', 'ST'):
             vals = self.Si[self.current_plot][::-1]
             confs = self.Si[f"{self.current_plot}_conf"][::-1]
-            colors = ['skyblue'] if self.current_plot == 'S1' else ['violet']
+            colors = ['lightgreen'] if self.current_plot == 'S1' else ['violet']
             self.bars = self.ax.barh(names, vals, color=colors[0])
             self.plot_values = list(zip(vals, confs))
-            self.ax.set_title(f"{'First' if self.current_plot == 'S1' else 'Total'} Order Sobol Indices ({self.current_plot})")
+            self.ax.set_title(f"{'First' if self.current_plot == 'S1' else 'Total'}-Order Sobol Indices ({self.current_plot})")
             self.ax.set_xlabel(f"{self.current_plot}")
-            fig_width, fig_height = 6 * self.zoom_factor, max(2, len(names) * 0.3) * self.zoom_factor
+            fig_width, fig_height = 8 * self.zoom_factor, max(4, len(names) * 0.9) * self.zoom_factor
 
         elif self.current_plot == 'S2':
             n = len(self.param_names)
@@ -307,7 +307,7 @@ class SAViewer(ttk.Frame):
             self.ax.set_xticklabels(self.param_names, rotation=45, ha='right')
             self.ax.set_yticklabels(self.param_names)
             self.ax.set_title("Second Order Sobol Indices (S2)")
-            fig_width, fig_height = max(5, len(names) * 0.8) * self.zoom_factor, max(4, len(names) * 0.8) * self.zoom_factor
+            fig_width, fig_height = max(5.5, len(names) * 0.9) * self.zoom_factor, max(4.625, len(names) * 0.9) * self.zoom_factor
 
         self.annot = self.ax.annotate(
             "", xy=(0, 0), xytext=(0, 0), textcoords="offset points",
@@ -648,7 +648,7 @@ class MainApp:
             raise ValueError("Invalid value_type for select_colormap_value_field. Must be 'min' or 'max'.")
         cmd = f"select colormap {value_type} value field"
         self._add_unique_command(cmd)
-        messagebox.showinfo("Info", f"Selected colormap {value_type} value field")
+        messagebox.showinfo("Info", f"Colormap {value_type} value field selected")
         self.show_recording_menu()
 
     def capture_completion_indicator(self):
@@ -672,19 +672,32 @@ class MainApp:
         ttk.Button(main_frame, text="Back", width=20, command=self.show_recording_menu).pack(side=tk.BOTTOM, pady=5)
     
     def show_timeout_only_input(self):
-        for widget in self.root.winfo_children(): widget.destroy()
+        for widget in self.root.winfo_children():
+            widget.destroy()
+
         self.root.title(f"Timeout Configuration | {self.project.metadata['name']}")
         self.root.protocol("WM_DELETE_WINDOW", self.show_completion_indicator_choice)
-        self.center_window(400, 200)
+        self.center_window(400, 100)
         self.root.config(bg="white")
-        
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill=tk.BOTH, expand=True, pady=20, padx=20)
-        
-        ttk.Label(main_frame, text="Enter timeout in seconds:").pack(side=tk.LEFT)
+
+        # Main frame centered in the window
+        main_frame = ttk.Frame(self.root, padding=20)
+        main_frame.place(relx=0.5, rely=0.5, anchor="center")
+
         timeout_var = tk.StringVar(value="10.0")
-        timeout_entry = ttk.Entry(main_frame, textvariable=timeout_var, width=20)
-        timeout_entry.pack(side=tk.LEFT, padx=10, fill=tk.X)
+
+        # Label and entry on the same row
+        ttk.Label(
+            main_frame,
+            text="Enter timeout in seconds:"
+        ).grid(row=0, column=0, padx=(0, 10), pady=(0, 20), sticky="e")
+
+        timeout_entry = ttk.Entry(
+            main_frame,
+            textvariable=timeout_var,
+            width=20
+        )
+        timeout_entry.grid(row=0, column=1, pady=(0, 20), sticky="w")
         timeout_entry.focus()
         
         def on_confirm():
@@ -702,12 +715,12 @@ class MainApp:
             except ValueError:
                 messagebox.showerror("Error", "Please enter a valid number")
         
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(side=tk.BOTTOM, pady=10)
-        ttk.Button(button_frame, text="Confirm", width=20, command=on_confirm).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Back", width=20, command=self.show_completion_indicator_choice).pack(side=tk.LEFT, padx=5)
-        
-        timeout_entry.bind("<Return>", lambda e: on_confirm())
+        # Buttons
+        ttk.Button(main_frame,text="Confirm",width=20,command=on_confirm).grid(row=2, column=0, padx=5)
+        ttk.Button(main_frame,text="Back",width=20,command=self.show_completion_indicator_choice).grid(row=2, column=1, padx=5)
+
+        # Enter key triggers confirmation
+        timeout_entry.bind("<Return>", lambda event: on_confirm())
 
     def start_new_sa(self):
         folder = filedialog.askdirectory(title="Select Empty Folder for New Project")
@@ -907,18 +920,16 @@ class MainApp:
         for widget in self.root.winfo_children(): widget.destroy()
         self.root.title(f"Replay paused | {self.project.metadata['name']}")
         self.root.protocol("WM_DELETE_WINDOW", self.stop_replay)
-        self.center_window(500, 200)
+        self.center_window(300, 140)
         self.root.config(bg="white")
         
         main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=10)
+        main_frame.pack(fill=tk.BOTH, expand=True, pady=20, padx=20)
         
-        ttk.Label(main_frame, text=f"Replay paused at sample {self.current_sample_index + 1} of {len(self.project.samples)}", 
-                font=("Arial", 12)).pack(pady=20)
+        ttk.Label(main_frame, text=f"Replay paused at sample {self.current_sample_index + 1} of {len(self.project.samples)}").pack(pady=(0,10))
         
-        ttk.Button(main_frame, text="Resume running simulations", command=self.resume_replay).pack(fill=tk.X, padx=20, pady=10)
-        
-        ttk.Button(main_frame, text="Stop and return to main menu", command=self.stop_replay).pack(fill=tk.X, padx=20, pady=10)
+        ttk.Button(main_frame, text="Resume running simulations", command=self.resume_replay).pack(fill=tk.X, padx=20, pady=5)
+        ttk.Button(main_frame, text="Stop and return to main menu", command=self.stop_replay).pack(fill=tk.X, padx=20, pady=5)
 
     def resume_replay(self):
         self.replay_paused = False
@@ -1598,8 +1609,8 @@ class MainApp:
             self._stop_replay_keyboard_listener()
 
     def _on_replay_finished(self):
-        self.setup_main_menu()
         self.root.deiconify()
+        self.setup_main_menu()
         messagebox.showinfo("Success", "All simulations completed!")
 
 if __name__ == "__main__":

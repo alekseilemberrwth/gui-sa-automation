@@ -95,9 +95,12 @@ class VisionEngine:
 
     def rgb_to_scalar(self, rgb, cmap_name, val_min, val_max):
         cmap = mpl.colormaps[cmap_name]
-        colors = np.array(cmap.colors) * 255
+        colors = (np.array(cmap.colors) * 255).astype('int64') # Colors are floats, but a PC display's RGB pixels are triples of integer values
         distances = np.sqrt(np.sum((colors - rgb)**2, axis=1))
         closest_idx = np.argmin(distances)
+
+        # colors_float = np.array(cmap.colors) * 255
+        # print(f'Distance at closest_idx: {distances[closest_idx]}, float color: {colors_float[closest_idx]}')
         
         normalized_val = closest_idx / (cmap.N - 1)  # Normalize to [0, 1]
         return val_min + (normalized_val * (val_max - val_min))
