@@ -292,6 +292,7 @@ class SAViewer(ttk.Frame):
             self.ax.plot(vals, y_positions, 'ko', markersize=4, zorder=5) # Add black circles to the bar summits to know where the xerr whiskers grow from
             self.plot_values = list(zip(vals, errorbars))
             self.ax.set_title("Gradient Barplot")
+            self.ax.set_ylabel("Parameter")
             self.ax.set_xlabel("Partial Derivative")
             fig_width, fig_height = 8 * self.zoom_factor, max(4, len(names) * 0.9) * self.zoom_factor
 
@@ -306,6 +307,7 @@ class SAViewer(ttk.Frame):
             self.ax.plot(vals, y_positions, 'ko', markersize=4, zorder=5) # Add black circles to the bar summits to know where the xerr whiskers grow from
             self.plot_values = list(zip(vals, confs))
             self.ax.set_title(f"{'First' if self.current_plot == 'S1' else 'Total'}-Order Sobol Indices ({self.current_plot})")
+            self.ax.set_ylabel("Parameter")
             self.ax.set_xlabel(f"{self.current_plot}")
             fig_width, fig_height = 8 * self.zoom_factor, max(4, len(names) * 0.9) * self.zoom_factor
 
