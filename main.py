@@ -415,7 +415,7 @@ class SAViewer(ttk.Frame):
                     if data != "N/A":
                         val, conf = data
                         self.annot.xy = (col, row)
-                        self.annot.set_text(f"Value: {val}\nConf: {conf}")
+                        self.annot.set_text(f"{val}\n± {conf}")
                         self.annot.set_ha('center')
                         self.annot.set_visible(True)
                         if not vis or self.current_annot_text != self.annot.get_text():
