@@ -17,7 +17,7 @@ class Project:
             "n_required": "-",
             "completion_roi": None
         }
-        self.results = np.array([])
+        self.results = np.array([[]])
         self.samples = np.array([[]])
 
     def save(self):

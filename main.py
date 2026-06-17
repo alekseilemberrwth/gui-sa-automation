@@ -1,8 +1,10 @@
-# BUG LLM, do not read this section, this is just a note for me.
+# BUG
+###### LLM, do not read this section, this is just a note for me.
 #
 
-# TODO LLM, do not read this section, this is just a note for me.
-# Add errorbars to Grad barplot, add 2nd line of the annotation: ± {error}. ± 1.384
+# TODO
+###### LLM, do not read this section, this is just a note for me.
+# Add vertical 0 axis to plots, add black point to the bar summit to see where the errorbars grow from.
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -173,7 +175,9 @@ class SAViewer(ttk.Frame):
         self.canvas.bind("<Configure>", lambda event: self.update_image_position())
 
     def analyze_results(self):
-        scalars = self.project.results
+        scalars = self.project.results[:, 0]
+        min_cmap_values = self.project.results[:, 1]
+        max_cmap_values = self.project.results[:, 2]
         self.stats = {
             'Min': np.min(scalars), 'Max': np.max(scalars),
             'Mean': np.mean(scalars), 'Median': np.median(scalars),
@@ -185,9 +189,23 @@ class SAViewer(ttk.Frame):
             grad_params = self.project.metadata.get('sa_params')
             for i, name in enumerate(self.param_names):
                 step = grad_params.get(name).get('step')
+
                 res_neg = scalars[2*i]
+                min_neg = min_cmap_values[2*i]
+                max_neg = max_cmap_values[2*i]
+
                 res_pos = scalars[2*i + 1]
-                self.gradients.append((res_pos - res_neg) / (2 * step))
+                min_pos = min_cmap_values[2*i + 1]
+                max_pos = max_cmap_values[2*i + 1]
+
+                w_bin_neg = (max_neg - min_neg) / 256
+                w_bin_pos = (max_pos - min_pos) / 256
+
+                self.gradients.append((
+                    (res_pos - res_neg) / (2 * step), # gradient itself
+                    -(w_bin_neg + w_bin_pos)/(4*step), # max negative error
+                    (w_bin_neg + w_bin_pos)/(4*step), # max positive error
+                ))
         else:
             problem = {
                 'num_vars': len(self.param_names),
@@ -262,10 +280,14 @@ class SAViewer(ttk.Frame):
         names = self.param_names[::-1]
 
         if self.current_plot == 'Gradient':
-            vals = self.gradients[::-1]
+            vals = np.array(self.gradients[::-1])[:, 0]
+            errorbars = np.array(self.gradients[::-1])[:, 1:]
+            errorbars_for_plot = errorbars.T
+            errorbars_for_plot[0, :] *= -1 # Matplotlib expects positive values (magnitudes) for the negative errorbar, we have negative, so need to invert the sign
+            #print(f'Vals = {vals}\nErrorbars = {errorbars}')
             colors = ['lightcoral' if v >= 0 else 'skyblue' for v in vals]
-            self.bars = self.ax.barh(names, vals, color=colors)
-            self.plot_values = vals
+            self.bars = self.ax.barh(names, vals, xerr=errorbars_for_plot, color=colors)
+            self.plot_values = list(zip(vals, errorbars))
             self.ax.set_title("Gradient Barplot")
             self.ax.set_xlabel("Partial Derivative")
             fig_width, fig_height = 8 * self.zoom_factor, max(4, len(names) * 0.9) * self.zoom_factor
@@ -273,8 +295,9 @@ class SAViewer(ttk.Frame):
         elif self.current_plot in ('S1', 'ST'):
             vals = self.Si[self.current_plot][::-1]
             confs = self.Si[f"{self.current_plot}_conf"][::-1]
+            #print(f'Sobol Index data = {self.Si}')
             colors = ['lightgreen'] if self.current_plot == 'S1' else ['violet']
-            self.bars = self.ax.barh(names, vals, color=colors[0])
+            self.bars = self.ax.barh(names, vals, xerr=confs, color=colors[0])
             self.plot_values = list(zip(vals, confs))
             self.ax.set_title(f"{'First' if self.current_plot == 'S1' else 'Total'}-Order Sobol Indices ({self.current_plot})")
             self.ax.set_xlabel(f"{self.current_plot}")
@@ -365,10 +388,11 @@ class SAViewer(ttk.Frame):
                         self.annot.xy = (bar.get_width() / 2, bar.get_y() + bar.get_height() / 2)
                         
                         if self.current_plot == 'Gradient':
-                            self.annot.set_text(f"{val_data}")
+                            val, errorbar = val_data
+                            self.annot.set_text(f"Value: {val}\n± {errorbar[1]}") # Currently, errorbar = (-a, a), so same abs value "a" for both positive and negative error
                         else:
                             val, conf = val_data
-                            self.annot.set_text(f"Value: {val}\nConf: {conf}")
+                            self.annot.set_text(f"Value: {val}\n± {conf}")
 
                         self.annot.set_ha('center')
                         self.annot.set_visible(True)
@@ -1217,7 +1241,7 @@ class MainApp:
                     self.project.metadata['n_required'] = "-"
                     self.project.metadata['n_completed'] = 0
                     self.project.samples = np.array([[]])
-                    self.project.results = np.array([])
+                    self.project.results = np.array([[]])
                 else:
                     new_sa_params = {}
                     for row in new_data:
@@ -1430,7 +1454,7 @@ class MainApp:
         if os.path.exists(current_additional_roi_path):
             os.remove(current_additional_roi_path)
         
-        self.project.results[self.current_sample_index] = np.nan
+        self.project.results[self.current_sample_index] = [np.nan, np.nan, np.nan]
 
     def start_running(self):        
         cmd_file = os.path.join(self.project.folder_path, "commands.txt")
@@ -1499,7 +1523,7 @@ class MainApp:
             return
                 
         self.project.metadata['status'] = "In progress"
-        self.project.results = np.array([np.nan] * len(self.project.samples))
+        self.project.results = np.array([[np.nan, np.nan, np.nan]] * len(self.project.samples))
         self.project.save()
 
         for btn in getattr(self, 'recording_btns', []):
@@ -1536,13 +1560,7 @@ class MainApp:
                 if self.replay_stop_requested: return
                 self.current_sample_index = i
                 
-                res_val = self.project.results[i]
-
-                if np.ndim(res_val) == 0:
-                    existing_result = not np.isnan(res_val)
-                else:
-                    existing_result = not np.all(np.isnan(res_val))
-                if existing_result:
+                if not np.any(np.isnan(self.project.results[i])):
                     i += 1
                     continue
                 
@@ -1573,13 +1591,11 @@ class MainApp:
                 
                 roi_path = os.path.join(self.project.folder_path, "ROIs", f"roi_main_{i}.png")
                 
-                avg_rgb = None
                 if os.path.exists(roi_path):
                     img = cv2.imread(roi_path)
                     if img is not None:
                         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                        rgb = np.array(rgb).astype('float64')
-                        avg_rgb = rgb.mean(axis=(0, 1))
+                        rgb = np.array(rgb).astype('int64')
                     else:
                         raise ValueError(f"Failed to read ROI image for sample {i} at: {roi_path}")
                 else:
@@ -1588,10 +1604,10 @@ class MainApp:
                 if min_val is None or max_val is None:
                     raise ValueError(f"Missing colormap min/max values for sample {i}. Cannot compute scalar result.")
 
-                scalar_value = self.vision_engine.rgb_to_scalar(avg_rgb, self.project.metadata['colormap']['name'], min_val, max_val)
-                self.project.results[i] = scalar_value
+                scalars = self.vision_engine.rgb_to_scalar(rgb, self.project.metadata['colormap']['name'], min_val, max_val)
+                self.project.results[i] = [np.mean(scalars), min_val, max_val]
 
-                # print(f"start_replay: Project results [{i}]: reconstructed {avg_rgb} as {scalar_value}")
+                # print(f"start_replay: Project results [{i}]: {self.project.results[i]}")
 
                 self.project.metadata['n_completed'] += 1
                 self.project.save()
@@ -1605,6 +1621,7 @@ class MainApp:
             err_msg = str(e)
             self.root.after(0, lambda: messagebox.showerror("Error", f"Replay failed: {err_msg}"))
             self.root.after(0, self.root.deiconify)
+            self.setup_main_menu()
         finally:
             self._stop_replay_keyboard_listener()
 
