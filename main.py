@@ -4,7 +4,7 @@
 
 # TODO
 ###### LLM, do not read this section, this is just a note for me.
-# Add vertical 0 axis to plots, add black point to the bar summit to see where the errorbars grow from.
+#
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -287,6 +287,9 @@ class SAViewer(ttk.Frame):
             #print(f'Vals = {vals}\nErrorbars = {errorbars}')
             colors = ['lightcoral' if v >= 0 else 'skyblue' for v in vals]
             self.bars = self.ax.barh(names, vals, xerr=errorbars_for_plot, color=colors)
+            self.ax.axvline(x=0, color='black', linewidth=0.8)
+            y_positions = range(len(names))
+            self.ax.plot(vals, y_positions, 'ko', markersize=4, zorder=5) # Add black circles to the bar summits to know where the xerr whiskers grow from
             self.plot_values = list(zip(vals, errorbars))
             self.ax.set_title("Gradient Barplot")
             self.ax.set_xlabel("Partial Derivative")
@@ -298,6 +301,9 @@ class SAViewer(ttk.Frame):
             #print(f'Sobol Index data = {self.Si}')
             colors = ['lightgreen'] if self.current_plot == 'S1' else ['violet']
             self.bars = self.ax.barh(names, vals, xerr=confs, color=colors[0])
+            self.ax.axvline(x=0, color='black', linewidth=0.8)
+            y_positions = range(len(names))
+            self.ax.plot(vals, y_positions, 'ko', markersize=4, zorder=5) # Add black circles to the bar summits to know where the xerr whiskers grow from
             self.plot_values = list(zip(vals, confs))
             self.ax.set_title(f"{'First' if self.current_plot == 'S1' else 'Total'}-Order Sobol Indices ({self.current_plot})")
             self.ax.set_xlabel(f"{self.current_plot}")
@@ -389,10 +395,10 @@ class SAViewer(ttk.Frame):
                         
                         if self.current_plot == 'Gradient':
                             val, errorbar = val_data
-                            self.annot.set_text(f"Value: {val}\n± {errorbar[1]}") # Currently, errorbar = (-a, a), so same abs value "a" for both positive and negative error
+                            self.annot.set_text(f"{val}\n± {errorbar[1]}") # Currently, errorbar = (-a, a), so same abs value "a" for both positive and negative error
                         else:
                             val, conf = val_data
-                            self.annot.set_text(f"Value: {val}\n± {conf}")
+                            self.annot.set_text(f"{val}\n± {conf}")
 
                         self.annot.set_ha('center')
                         self.annot.set_visible(True)
