@@ -600,8 +600,8 @@ class MainApp:
         info_frame = ttk.Frame(main_frame)
         info_frame.pack(fill=tk.X, pady=5)
         info_frame_text = (f"SA type: {self.project.metadata.get('sa_type', '-')}"
-                           f"{' (including ' if self.project.metadata.get('sa_params', {}).get('calc_second_order', False) else ' (excluding '}"
-                           "second order)          "
+                           f"{' (including second order)' if self.project.metadata.get('sa_params', {}).get('calc_second_order', False) else ' (excluding second order)' if 'sobol_n' in self.project.metadata.get('sa_params', {}) else ''}"
+                           "          "
                            f"Simulation runs performed: {self.project.metadata.get('n_completed')}/{self.project.metadata.get('n_required')}          "
                            f"Colormap: {self.project.metadata.get('colormap', {}).get('name', '-')}")
         ttk.Label(info_frame, text=info_frame_text).pack(side=tk.LEFT, padx=0)
