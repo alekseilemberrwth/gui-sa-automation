@@ -291,7 +291,7 @@ class SAViewer(ttk.Frame):
             y_positions = range(len(names))
             self.ax.plot(vals, y_positions, 'ko', markersize=4, zorder=5) # Add black circles to the bar summits to know where the xerr whiskers grow from
             self.plot_values = list(zip(vals, errorbars))
-            self.ax.set_title("Gradient Barplot")
+            self.ax.set_title("Gradient")
             self.ax.set_ylabel("Parameter")
             self.ax.set_xlabel("Partial Derivative")
             fig_width, fig_height = 8 * self.zoom_factor, max(4, len(names) * 0.9) * self.zoom_factor
