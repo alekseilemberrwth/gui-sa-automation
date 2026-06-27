@@ -4,7 +4,9 @@
 
 # TODO
 ###### LLM, do not read this section, this is just a note for me.
-#
+# 1. Remove print()
+# 2. I am curious how we can pick an optimal step size (perhaps, different per each variable). Iteratively decrease it until no relative change OR until derivative = 0?
+# Alternatively, if derivative = 0, increase it, until it becomes != 0?
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -168,7 +170,7 @@ class SAViewer(ttk.Frame):
 
         self.analyze_results()
 
-        self.current_plot = 'Gradient' if self.sa_type == 'Local Gradient Calculation' else 'S1'
+        self.current_plot = 'Gradient' if self.sa_type == 'Gradient' else 'S1'
         self.create_widgets()
         self.draw_plot()
 
@@ -181,10 +183,10 @@ class SAViewer(ttk.Frame):
         self.stats = {
             'Min': np.min(scalars), 'Max': np.max(scalars),
             'Mean': np.mean(scalars), 'Median': np.median(scalars),
-            'STD': np.std(scalars), 'MAD': np.median(np.abs(scalars - np.median(scalars)))
+            'STD': np.std(scalars, ddof=1), 'MAD': np.median(np.abs(scalars - np.median(scalars)))
         }
 
-        if self.sa_type == 'Local Gradient Calculation':
+        if self.sa_type == 'Gradient':
             self.gradients = []
             grad_params = self.project.metadata.get('sa_params')
             for i, name in enumerate(self.param_names):
@@ -284,7 +286,7 @@ class SAViewer(ttk.Frame):
             errorbars = np.array(self.gradients[::-1])[:, 1:]
             errorbars_for_plot = errorbars.T
             errorbars_for_plot[0, :] *= -1 # Matplotlib expects positive values (magnitudes) for the negative errorbar, we have negative, so need to invert the sign
-            #print(f'Vals = {vals}\nErrorbars = {errorbars}')
+            print(f'Vals = {vals}\nErrorbars = {errorbars_for_plot}')
             colors = ['lightcoral' if v >= 0 else 'skyblue' for v in vals]
             self.bars = self.ax.barh(names, vals, xerr=errorbars_for_plot, color=colors)
             self.ax.axvline(x=0, color='black', linewidth=0.8)
@@ -299,7 +301,7 @@ class SAViewer(ttk.Frame):
         elif self.current_plot in ('S1', 'ST'):
             vals = self.Si[self.current_plot][::-1]
             confs = self.Si[f"{self.current_plot}_conf"][::-1]
-            #print(f'Sobol Index data = {self.Si}')
+            print(f'Sobol Index data = {self.Si}')
             colors = ['lightgreen'] if self.current_plot == 'S1' else ['violet']
             self.bars = self.ax.barh(names, vals, xerr=confs, color=colors[0])
             self.ax.axvline(x=0, color='black', linewidth=0.8)
@@ -312,6 +314,7 @@ class SAViewer(ttk.Frame):
             fig_width, fig_height = 8 * self.zoom_factor, max(4, len(names) * 0.9) * self.zoom_factor
 
         elif self.current_plot == 'S2':
+            print(f'Sobol Index data = {self.Si}')
             n = len(self.param_names)
             s2_data = self.Si['S2']
             s2_conf = self.Si['S2_conf']
@@ -613,7 +616,7 @@ class MainApp:
         
         sa_type = self.project.metadata.get('sa_type', '')
         headers = ["Name", "Range"]
-        if sa_type == 'Local Gradient Calculation': headers += ["Point", "Step"]
+        if sa_type == 'Gradient': headers += ["Point", "Step"]
         
         param_tree = EditableTreeview(table_frame, columns=headers, editable_cols=[], tree_height=3, col_widths={"Range": 450})
         param_tree.pack(fill=tk.X, padx=(3,3), pady=5)
@@ -621,7 +624,7 @@ class MainApp:
         data = []
         for pname, bounds in self.project.metadata['params'].items():
             row = [pname, f"[{bounds['min']}, {bounds['max']}]"]
-            if sa_type == 'Local Gradient Calculation':
+            if sa_type == 'Gradient':
                 grad_params = self.project.metadata.get('sa_params', {}).get(pname, {})
                 row.extend([grad_params.get('point', ''), grad_params.get('step', '')])
             data.append(row)
@@ -643,6 +646,8 @@ class MainApp:
                 stats_tree.pack(fill=tk.X, padx=(3,3), pady=(0, 5))
                 st = plot_viewer.stats
                 stats_tree.populate([[f"{st['Min']}", f"{st['Max']}", f"{st['Mean']}", f"{st['Median']}", f"{st['STD']}", f"{st['MAD']}"]])
+
+                print(st)
 
                 plot_viewer.pack(fill=tk.BOTH, expand=True, padx=(3,3))
 
@@ -1229,7 +1234,7 @@ class MainApp:
                         if min_val != old_min or max_val != old_max:
                             if sa_type == 'Sobol Index':
                                 sa_discarded = True
-                            elif sa_type == 'Local Gradient Calculation':
+                            elif sa_type == 'Gradient':
                                 grad_p = sa_params.get(orig_name)
                                 if grad_p:
                                     pt = grad_p['point']
@@ -1312,7 +1317,7 @@ class MainApp:
         ttk.Label(main_frame, text="SA Type:", font=("Arial", 10, "bold")).pack(pady=10)
         type_var = tk.StringVar(value=self.project.metadata.get('sa_type', ''))
         
-        sa_types = ['Sobol Index', 'Local Gradient Calculation']
+        sa_types = ['Sobol Index', 'Gradient']
         cb = ttk.Combobox(main_frame, textvariable=type_var, values=sa_types, state='readonly')
         cb.pack(pady=10, fill=tk.X)
         
@@ -1341,9 +1346,9 @@ class MainApp:
                 second_order_cb = ttk.Checkbutton(param_frame, text="Calculate second order indices", variable=calc_second_order_var)
                 second_order_cb.pack(anchor=tk.W, pady=10)
                 param_frame.calc_second_order = calc_second_order_var
-            elif sa_type == 'Local Gradient Calculation':
+            elif sa_type == 'Gradient':
                 if len(self.project.metadata['params']) == 0:
-                    messagebox.showerror("Error", "Local Gradient Calculation requires at least 1 parameter. Please add parameters first.")
+                    messagebox.showerror("Error", "Gradient requires at least 1 parameter. Please add parameters first.")
                     type_var.set('')
                     return
                 ttk.Label(param_frame, text="Parameter settings", font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=10)
@@ -1355,7 +1360,7 @@ class MainApp:
                                                   col_widths={"Name": 125,"Range": 250, "Point": 125, "Step": 125})
                 self.grad_tree.pack(fill=tk.BOTH, expand=True)
                 
-                saved_grad_params = self.project.metadata.get('sa_params', {}) if self.project.metadata.get('sa_type') == 'Local Gradient Calculation' else {}
+                saved_grad_params = self.project.metadata.get('sa_params', {}) if self.project.metadata.get('sa_type') == 'Gradient' else {}
                 data = []
                 for param_name, bounds in self.project.metadata['params'].items():
                     default_point = saved_grad_params.get(param_name, {}).get('point', (bounds['min'] + bounds['max']) / 2)
@@ -1401,7 +1406,7 @@ class MainApp:
                 calc_second_order = frame.calc_second_order.get()
                 samples = sobol_sample(problem, sobol_n, calc_second_order=calc_second_order, seed=SOBOL_SAMPLE_SEED)
                 self.project.metadata['sa_params'] = {'sobol_n': sobol_n, 'calc_second_order': calc_second_order}
-            elif sa_type == 'Local Gradient Calculation':
+            elif sa_type == 'Gradient':
                 if hasattr(frame, 'grad_tree'):
                     frame.grad_tree.commit_editor()
                     data = frame.grad_tree.get_data()
