@@ -4,9 +4,7 @@
 
 # TODO
 ###### LLM, do not read this section, this is just a note for me.
-# 1. Remove print()
-# 2. I am curious how we can pick an optimal step size (perhaps, different per each variable). Iteratively decrease it until no relative change OR until derivative = 0?
-# Alternatively, if derivative = 0, increase it, until it becomes != 0?
+#
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -29,8 +27,8 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 
-# For debugging purposes, to ensure reproducibility
-SOBOL_SAMPLE_SEED = 42
+# For debugging purposes, to ensure reproducibility, set it to, e.g., 42
+SOBOL_SAMPLE_SEED = None
 
 class EditableTreeview(ttk.Frame):
     def __init__(self, parent, columns, display_columns=None, editable_cols=None, tree_height=10, col_widths=None, allow_delete=False, *args, **kwargs):
@@ -286,7 +284,7 @@ class SAViewer(ttk.Frame):
             errorbars = np.array(self.gradients[::-1])[:, 1:]
             errorbars_for_plot = errorbars.T
             errorbars_for_plot[0, :] *= -1 # Matplotlib expects positive values (magnitudes) for the negative errorbar, we have negative, so need to invert the sign
-            print(f'Vals = {vals}\nErrorbars = {errorbars_for_plot}')
+            #print(f'Vals = {vals}\nErrorbars = {errorbars_for_plot}')
             colors = ['lightcoral' if v >= 0 else 'skyblue' for v in vals]
             self.bars = self.ax.barh(names, vals, xerr=errorbars_for_plot, color=colors)
             self.ax.axvline(x=0, color='black', linewidth=0.8)
@@ -301,7 +299,7 @@ class SAViewer(ttk.Frame):
         elif self.current_plot in ('S1', 'ST'):
             vals = self.Si[self.current_plot][::-1]
             confs = self.Si[f"{self.current_plot}_conf"][::-1]
-            print(f'Sobol Index data = {self.Si}')
+            #print(f'Sobol Index data = {self.Si}')
             colors = ['lightgreen'] if self.current_plot == 'S1' else ['violet']
             self.bars = self.ax.barh(names, vals, xerr=confs, color=colors[0])
             self.ax.axvline(x=0, color='black', linewidth=0.8)
@@ -314,7 +312,7 @@ class SAViewer(ttk.Frame):
             fig_width, fig_height = 8 * self.zoom_factor, max(4, len(names) * 0.9) * self.zoom_factor
 
         elif self.current_plot == 'S2':
-            print(f'Sobol Index data = {self.Si}')
+            #print(f'Sobol Index data = {self.Si}')
             n = len(self.param_names)
             s2_data = self.Si['S2']
             s2_conf = self.Si['S2_conf']
@@ -647,7 +645,7 @@ class MainApp:
                 st = plot_viewer.stats
                 stats_tree.populate([[f"{st['Min']}", f"{st['Max']}", f"{st['Mean']}", f"{st['Median']}", f"{st['STD']}", f"{st['MAD']}"]])
 
-                print(st)
+                #print(st)
 
                 plot_viewer.pack(fill=tk.BOTH, expand=True, padx=(3,3))
 
@@ -1594,7 +1592,8 @@ class MainApp:
                 except TimeoutError as e:
                     self.cleanup_partial_simulation_run_results()
                     self.replay_paused = True
-                    self.root.after(0, lambda: self._show_timeout_error(str(e)))
+                    error_msg = str(e)
+                    self.root.after(0, lambda: self._show_timeout_error(error_msg))
                     continue
                 except PauseRequested:
                     self.cleanup_partial_simulation_run_results()

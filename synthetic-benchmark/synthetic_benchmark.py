@@ -316,7 +316,10 @@ class BenchmarkApp:
                 vmax = self.Z.max()
         self.ax.clear()
         self.ax.set_facecolor('white')
-        c = self.ax.imshow(self.Z, extent=[self.current['a_min'], self.current['a_max'], self.current['b_min'], self.current['b_max']], origin='lower', cmap=self.current['colormap'], vmin=vmin, vmax=vmax)
+        c = self.ax.imshow(self.Z, extent=[self.current['a_min'], self.current['a_max'], self.current['b_min'], self.current['b_max']], origin='lower',
+                           cmap=self.current['colormap'], vmin=vmin, vmax=vmax,
+                           interpolation='none'
+                           )
         if not hasattr(self, 'cbar'):
             self.cbar = self.fig.colorbar(c, ax=self.ax)
         else:

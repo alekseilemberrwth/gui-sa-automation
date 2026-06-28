@@ -100,8 +100,8 @@ class VisionEngine:
         distances = np.sqrt(np.sum((colors - rgb)**2, axis=-1))
         closest_idx = np.argmin(distances, axis=-1)
 
-        if not np.allclose(np.min(distances, axis=-1), 0, rtol=0, atol=1e-10) and len(np.squeeze(rgb).shape) == 1:
-            print(f'[WARNING] rgb_to_scalar: the exact matching color was not found, min distances = {np.min(distances, axis=-1)}')
+        if not np.allclose(np.min(distances, axis=-1), 0, rtol=0, atol=1e-10):
+            print(f'[WARNING] rgb_to_scalar: the exact matching color was not found, max(min distances) = {np.min(distances, axis=-1).max()}')
 
         normalized_val = (closest_idx.astype('float64') + 0.5) / cmap.N  # 0.5, 1.5, ..., 255.5 - to minimize the expected squared reconstruction error, we reconstruct the midpoint of the ListedColormap's interval
         return val_min + (normalized_val * (val_max - val_min))
