@@ -913,7 +913,7 @@ class MainApp:
 
         ttk.Label(cmap_frame, text="Choose colormap:").pack(side=tk.LEFT)
         cmap_var = tk.StringVar(value=self.project.metadata.get('colormap').get('name', "viridis"))
-        cmap_dropdown = ttk.Combobox(cmap_frame, textvariable=cmap_var, values=['viridis', 'turbo'], state='readonly')
+        cmap_dropdown = ttk.Combobox(cmap_frame, textvariable=cmap_var, values=['viridis', 'magma', 'cividis', 'turbo', 'jet', 'rainbow', 'gray'], state='readonly')
         cmap_dropdown.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 0))
 
         button_frame = ttk.Frame(main_frame)
@@ -1517,7 +1517,7 @@ class MainApp:
             messagebox.showerror("Error", "Please capture the main region of interest first")
             return
         
-        if not self.project.metadata.get('colormap').get('name', "") in ("viridis", "turbo"):
+        if not self.project.metadata.get('colormap').get('name', "") in ('viridis', 'magma', 'cividis', 'turbo', 'jet', 'rainbow', 'gray'):
             messagebox.showerror("Error", "Please select a valid colormap before starting simulations.")
             return
 

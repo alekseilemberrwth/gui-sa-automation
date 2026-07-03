@@ -128,7 +128,7 @@ class BenchmarkApp:
         cmap_frame.pack(pady=10)
         ttk.Label(cmap_frame, text="Colormap:").pack(side=tk.LEFT)
         self.cmap_var = tk.StringVar(value=self.current['colormap'])
-        cmaps = ttk.Combobox(cmap_frame, textvariable=self.cmap_var, values=['viridis', 'turbo', 'binary', 'gray'], width=10, state="readonly")
+        cmaps = ttk.Combobox(cmap_frame, textvariable=self.cmap_var, values=['viridis', 'magma', 'cividis', 'turbo', 'jet', 'rainbow', 'gray'], width=10, state="readonly")
         cmaps.pack(side=tk.LEFT)
         
         # Colorbar min max

@@ -96,6 +96,11 @@ class VisionEngine:
     def rgb_to_scalar(self, rgb, cmap_name, val_min, val_max):
         rgb = rgb[..., None, :]
         cmap = mpl.colormaps[cmap_name]
+
+        # Convert LinearSegmentedColormap to ListedColormap so the later code can work with both types of colormaps in the same way
+        if isinstance(cmap, mpl.colors.LinearSegmentedColormap):
+            cmap = mpl.colors.ListedColormap(cmap(np.linspace(0, 1, cmap.N))[:, :3])
+
         colors = (np.array(cmap.colors) * 255).astype('int64') # Colors are floats, but a PC display's RGB pixels are triples of integer values
         distances = np.sqrt(np.sum((colors - rgb)**2, axis=-1))
         closest_idx = np.argmin(distances, axis=-1)
