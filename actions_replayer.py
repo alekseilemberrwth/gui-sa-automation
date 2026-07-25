@@ -11,7 +11,7 @@ class StopRequested(Exception):
     """Exception raised when stop is requested during replay."""
     pass
 
-class TextReplayer:
+class ActionsReplayer:
     def __init__(self):
         self.m_ctrl = mouse.Controller()
         self.k_ctrl = keyboard.Controller()

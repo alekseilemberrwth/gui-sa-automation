@@ -2,7 +2,7 @@ import os
 import time
 from pynput import mouse, keyboard
 
-class TextRecorder:
+class ActionsRecorder:
     def __init__(self, cmd_file_path, on_menu_trigger):
         self.cmd_file_path = cmd_file_path
         self.on_menu_trigger = on_menu_trigger

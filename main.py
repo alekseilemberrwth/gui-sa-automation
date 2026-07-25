@@ -1,19 +1,11 @@
-# BUG
-###### LLM, do not read this section, this is just a note for me.
-#
-
-# TODO
-###### LLM, do not read this section, this is just a note for me.
-#
-
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import os
 import threading
 import sys
 from project import Project
-from recorder import TextRecorder
-from replayer import TextReplayer, PauseRequested, StopRequested
+from actions_recorder import ActionsRecorder
+from actions_replayer import ActionsReplayer, PauseRequested, StopRequested
 from vision_engine import VisionEngine
 from PIL import Image, ImageTk
 import numpy as np
@@ -557,7 +549,7 @@ class MainApp:
 
     def continue_recording_actions(self):
         cmd_file = os.path.join(self.project.folder_path, "commands.txt")
-        self.recorder = TextRecorder(cmd_file, lambda: self.root.after(0, self.show_recording_menu_from_pause))
+        self.recorder = ActionsRecorder(cmd_file, lambda: self.root.after(0, self.show_recording_menu_from_pause))
         self.vision_engine = VisionEngine(self.project.folder_path)
         self.recording_paused = True
         self.root.deiconify()
@@ -799,7 +791,7 @@ class MainApp:
         self.project.save()
         
         cmd_file = os.path.join(folder, "commands.txt")
-        self.recorder = TextRecorder(cmd_file, lambda: self.root.after(0, self.show_recording_menu_from_pause))
+        self.recorder = ActionsRecorder(cmd_file, lambda: self.root.after(0, self.show_recording_menu_from_pause))
         self.vision_engine = VisionEngine(folder)
 
         self.recording_paused = False
@@ -1556,7 +1548,7 @@ class MainApp:
     def start_replay(self):
         try:
             cmd_file = os.path.join(self.project.folder_path, "commands.txt")
-            replayer = TextReplayer()
+            replayer = ActionsReplayer()
             template_path = None
 
             for f in os.listdir(self.project.folder_path):
