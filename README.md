@@ -50,6 +50,12 @@ I have recorded a video demonstrating how to perform a single full sensitivity a
 
 Start the application:
 
-```bash
-python main.py
-```
+   **Linux / macOS:**
+   ```bash
+   python3 main.py
+   ```
+
+   **Windows (PowerShell):**
+   ```powershell
+   python main.py
+   ```
