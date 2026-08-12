@@ -1,9 +1,83 @@
-# GUI-SA-Automation: Sensitivity Analysis Automation Tool
+# GUI-SA-Automation
 
-Short description of the app I am building:
+Automating Image-Based Sensitivity Analysis for GUI-Based Black-Box Simulation Software.
 
-We have some GUI simulation software which outputs color-coded images. Simulation depends on some parameters set by the user. So the output is some function f(params, x, y) where x and y are image coordinates. If we fix x and y, we have just f(params), so we can consider the simulation output as some R^N -> R function of the parameters and x and y. But on our screen we do not see R^N -> R, we see R^N -> R^3, because we see the RGB pixels of the color-coded image. So we need to "color-decode", to get the actual scalar function value back. We can do it if we know the colormap and the minimal and maximal function value it uses. We want to perform sensitivity analysis (SA) of the simulation output with regard to its inputs at some point of the image (x, y). So we do not consider dependence on x and y here, they are fixed. To do so, user should select some region of the image (ROI - region of interest). We then calculate the average pixel of that region and color-decode that pixel back to the scalar function value. We perform SA of that average scalar with regard to the simulation parameters.
+## What this app does
 
-To perform SA, we run the simulation with different parameters and capture the screenshot of the output. User shows us how to run 1 simulation and we record his actions. Then the app performs runs of the simulation with different parameters, captures the output and saves it. Then when all required simulation runs are finished, we perform the SA on the data we have: many tuples of the form (simulation parameters, corresponding simulation outputs).
+A lightweight, non-intrusive Python application that automates GUI-driven simulation workflows. It:
 
-Currently my app is planned to support 2 types of SA: calculating gradient at a given point (currently in the files it's referred to as "gradient-based") and calculating Sobol indices. Sobol indices are to be implemented by me, don't think about them now. Focus on gradient-based. So basically user gives a point in the parameter space (e.g. x1 = 1, x2 = 2, x3 = 3), and we want to calculate the gradient of the simulation function at that point and output the vector (df/dx1, df/dx2, df/dx3) at point (x1 = 1, x2 = 2, x3 = 3).
+- **Records and replays** mouse and keyboard actions to operate closed-source GUI simulators (e.g., SimFlow, ElmerFEM, Ansys).
+- **Captures color-coded result images** from the simulator's output viewport.
+- **Reconstructs scalar values** by inverting colormaps (converting RGB pixels back to underlying numerical data).
+- **Computes sensitivity indices** including local gradients (via finite differences) and global variance-based Sobol indices.
+
+All interaction is **external only** — no source code access, APIs, or DLLs required.
+
+## Demo Video
+
+A complete walkthrough video demonstrating the app's full workflow with the **SimFlow Internal Pipe Flow gradient calculation** case study is available as a release asset.
+
+**[Download demo video from the latest release](https://github.com/alekseilemberrwth/gui-sa-automation/releases/latest)**
+
+---
+
+## Installation
+
+### Prerequisites
+- Python 3.10+ (developed and tested with Python 3.13)
+- git
+
+### Steps
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/alekseilemberrwth/gui-sa-automation.git
+   cd gui-sa-automation
+   ```
+
+2. **Create and activate a virtual environment** (recommended)
+
+   **Linux / macOS:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+3. **Install dependencies**
+   ```bash
+   pip install --upgrade pip
+   pip install -r requirements.txt
+   ```
+
+---
+
+## Launch
+
+Start the application:
+
+```bash
+python main.py
+```
+
+This launches the GUI. From there you can:
+
+1. **Create a new SA project** and choose a folder to store results.
+2. **Record a single simulation run** by interacting with your target simulator:
+   - Map parameter input fields to named parameters.
+   - Capture a **Simulation Completion Indicator (SCI)** — a small visual template that signals when the solver finishes (e.g., a "Done" window).
+   - Select your **Region of Interest (ROI)** — the area of the color-coded output to analyze.
+   - Configure the **colormap** and min/max bounds.
+3. **Configure sensitivity analysis type** (Gradient or Sobol) and generate sample points.
+4. **Save and run** — the app automatically replays your recorded workflow for each sample point, injects parameter values, detects completion, extracts and reconstructs scalar data, and computes indices.
+5. **View results** — interactive plots (bar charts for gradients, heatmaps for Sobol interactions).
+
+### Key tips
+- Ensure no other apps will steal focus or generate popups during long parametric sweeps.
+- Disable color post-processing (anti-aliasing, interpolation) in visualization software to preserve exact RGB values.
+- The app auto-saves frequently, so you can safely pause and resume runs.
