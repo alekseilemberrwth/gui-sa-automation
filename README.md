@@ -1,19 +1,16 @@
-# What this repository contains
+# About
 
 This repository contains the source code of the software application developed by me as part of my Master's Thesis at RWTH Aachen University from April to August 2026. The full thesis' title is: **Automating Image-Based Sensitivity Analysis for GUI-Based Black-Box Simulation Software**. Please find the description of the application in the [Master's Thesis Report](Master_Thesis.pdf).
 
 # Demo Video
 
-We provide a video demonstrating how to perform a single full sensitivity analysis workflow (from creating a new project to viewing the results) in (SimFlow)[https://sim-flow.com/] for the (Internal Pipe Flow example simulation project)[https://help.sim-flow.com/tutorials/pipe-flow]:
+I have recorded a video demonstrating how to perform a single full sensitivity analysis workflow (from creating a new project to viewing the results) in [SimFlow](https://sim-flow.com/) for the [Internal Pipe Flow example simulation project](https://help.sim-flow.com/tutorials/pipe-flow):
 
-<div align="center">
+<p align="center">
   <a href="https://youtu.be/kp1RgoEh6Ws">
-    <img src="https://youtu.be/kp1RgoEh6Ws" alt="Watch the video" width="70%">
+    <img src="https://img.youtube.com/vi/kp1RgoEh6Ws/maxresdefault.jpg" alt="Watch Video" width="700"/>
   </a>
-  <p>📸 <b><a href="https://youtu.be/kp1RgoEh6Ws">Click here to watch the full 11-minute video walkthrough on YouTube</a></b></p>
-</div>
-
----
+</p>
 
 # Installation
 
@@ -48,8 +45,6 @@ We provide a video demonstrating how to perform a single full sensitivity analys
    pip install --upgrade pip
    pip install -r requirements.txt
    ```
-
----
 
 ## Launch
 
