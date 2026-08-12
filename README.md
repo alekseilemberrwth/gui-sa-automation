@@ -16,6 +16,7 @@ I have recorded a video demonstrating how to perform a single full sensitivity a
 
 ## Prerequisites
 - Python 3.13.13+ (developed and tested with Python 3.13.13)
+- pip
 - git
 
 ## Steps
