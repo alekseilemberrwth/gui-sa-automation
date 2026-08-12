@@ -30,7 +30,7 @@ I have recorded a video demonstrating how to perform a single full sensitivity a
 
    **Linux / macOS:**
    ```bash
-   python -m venv .venv
+   python3 -m venv .venv
    source .venv/bin/activate
    ```
 
