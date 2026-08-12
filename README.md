@@ -1,33 +1,27 @@
-# GUI-SA-Automation
+# What this repository contains
 
-Automating Image-Based Sensitivity Analysis for GUI-Based Black-Box Simulation Software.
+This repository contains the source code of the software application developed by me as part of my Master's Thesis at RWTH Aachen University from April to August 2026. The full thesis' title is: **Automating Image-Based Sensitivity Analysis for GUI-Based Black-Box Simulation Software**. Please find the description of the application in the [Master's Thesis Report](Master_Thesis.pdf).
 
-## What this app does
+# Demo Video
 
-A lightweight, non-intrusive Python application that automates GUI-driven simulation workflows. It:
+We provide a video demonstrating how to perform a single full sensitivity analysis workflow (from creating a new project to viewing the results) in (SimFlow)[https://sim-flow.com/] for the (Internal Pipe Flow example simulation project)[https://help.sim-flow.com/tutorials/pipe-flow]:
 
-- **Records and replays** mouse and keyboard actions to operate closed-source GUI simulators (e.g., SimFlow, ElmerFEM, Ansys).
-- **Captures color-coded result images** from the simulator's output viewport.
-- **Reconstructs scalar values** by inverting colormaps (converting RGB pixels back to underlying numerical data).
-- **Computes sensitivity indices** including local gradients (via finite differences) and global variance-based Sobol indices.
-
-All interaction is **external only** — no source code access, APIs, or DLLs required.
-
-## Demo Video
-
-A complete walkthrough video demonstrating the app's full workflow with the **SimFlow Internal Pipe Flow gradient calculation** case study is available as a release asset.
-
-**[Download demo video from the latest release](https://github.com/alekseilemberrwth/gui-sa-automation/releases/latest)**
+<div align="center">
+  <a href="https://youtu.be/kp1RgoEh6Ws">
+    <img src="https://youtu.be/kp1RgoEh6Ws" alt="Watch the video" width="70%">
+  </a>
+  <p>📸 <b><a href="https://youtu.be/kp1RgoEh6Ws">Click here to watch the full 11-minute video walkthrough on YouTube</a></b></p>
+</div>
 
 ---
 
-## Installation
+# Installation
 
-### Prerequisites
-- Python 3.10+ (developed and tested with Python 3.13)
+## Prerequisites
+- Python 3.13.13+ (developed and tested with Python 3.13.13)
 - git
 
-### Steps
+## Steps
 
 1. **Clone the repository**
    ```bash
@@ -64,20 +58,3 @@ Start the application:
 ```bash
 python main.py
 ```
-
-This launches the GUI. From there you can:
-
-1. **Create a new SA project** and choose a folder to store results.
-2. **Record a single simulation run** by interacting with your target simulator:
-   - Map parameter input fields to named parameters.
-   - Capture a **Simulation Completion Indicator (SCI)** — a small visual template that signals when the solver finishes (e.g., a "Done" window).
-   - Select your **Region of Interest (ROI)** — the area of the color-coded output to analyze.
-   - Configure the **colormap** and min/max bounds.
-3. **Configure sensitivity analysis type** (Gradient or Sobol) and generate sample points.
-4. **Save and run** — the app automatically replays your recorded workflow for each sample point, injects parameter values, detects completion, extracts and reconstructs scalar data, and computes indices.
-5. **View results** — interactive plots (bar charts for gradients, heatmaps for Sobol interactions).
-
-### Key tips
-- Ensure no other apps will steal focus or generate popups during long parametric sweeps.
-- Disable color post-processing (anti-aliasing, interpolation) in visualization software to preserve exact RGB values.
-- The app auto-saves frequently, so you can safely pause and resume runs.
