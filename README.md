@@ -35,7 +35,6 @@ A video demonstrating how to perform sensitivity analysis for the [SimFlow](http
 1. **Clone the repository**
    ```bash
    git clone https://github.com/alekseilemberrwth/gui-sa-automation.git
-   cd gui-sa-automation
    ```
 
 2. **Create and activate a virtual environment** (recommended)
@@ -63,10 +62,12 @@ Start the application:
 
    **Linux / macOS:**
    ```bash
+   cd gui-sa-automation
    python3 main.py
    ```
 
    **Windows (PowerShell):**
    ```powershell
+   cd gui-sa-automation
    python main.py
    ```
