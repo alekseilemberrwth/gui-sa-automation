@@ -54,7 +54,6 @@ A video demonstrating how to perform sensitivity analysis for the [SimFlow](http
 
 3. **Install dependencies**
    ```bash
-   pip install --upgrade pip
    pip install -r requirements.txt
    ```
 
