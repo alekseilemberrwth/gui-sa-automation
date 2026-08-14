@@ -52,8 +52,15 @@ A video demonstrating how to perform sensitivity analysis for the [SimFlow](http
    ```
 
 3. **Install dependencies**
+   
+   **Linux / macOS:**
    ```bash
-   pip install -r requirements.txt
+   pip install -r ./gui-sa-automation/requirements.txt
+   ```
+
+   **Windows (PowerShell):**
+   ```powershell
+   pip install -r gui-sa-automation/requirements.txt
    ```
 
 ## Launch
@@ -62,12 +69,10 @@ Start the application:
 
    **Linux / macOS:**
    ```bash
-   cd gui-sa-automation
-   python3 main.py
+   python3 ./gui-sa-automation/main.py
    ```
 
    **Windows (PowerShell):**
    ```powershell
-   cd gui-sa-automation
-   python main.py
+   python gui-sa-automation/main.py
    ```
