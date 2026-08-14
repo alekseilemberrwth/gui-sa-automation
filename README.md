@@ -1,9 +1,78 @@
-# GUI-SA-Automation: Sensitivity Analysis Automation Tool
+# About
 
-Short description of the app I am building:
+This repository contains the source code of the software application developed as part of a Master's Thesis at RWTH Aachen University from April to August 2026. The thesis's title is: **Automating Image-Based Sensitivity Analysis for GUI-Based Black-Box Simulation Software**.
 
-We have some GUI simulation software which outputs color-coded images. Simulation depends on some parameters set by the user. So the output is some function f(params, x, y) where x and y are image coordinates. If we fix x and y, we have just f(params), so we can consider the simulation output as some R^N -> R function of the parameters and x and y. But on our screen we do not see R^N -> R, we see R^N -> R^3, because we see the RGB pixels of the color-coded image. So we need to "color-decode", to get the actual scalar function value back. We can do it if we know the colormap and the minimal and maximal function value it uses. We want to perform sensitivity analysis (SA) of the simulation output with regard to its inputs at some point of the image (x, y). So we do not consider dependence on x and y here, they are fixed. To do so, user should select some region of the image (ROI - region of interest). We then calculate the average pixel of that region and color-decode that pixel back to the scalar function value. We perform SA of that average scalar with regard to the simulation parameters.
+As follows from the thesis's title, given a simulation software which has a GUI and which renders the output of its simulations as color-coded images, the application is capable of conducting automated sensitivity analysis of the simulations that software performs in a completely non-intrusive fashion by imitating human mouse and keyboard actions to interact with that software's GUI and capturing the output of the simulations directly from the corresponding rendered color-coded visualizations. In order to conduct a single sensitivity analysis of a single simulation a user has to:
 
-To perform SA, we run the simulation with different parameters and capture the screenshot of the output. User shows us how to run 1 simulation and we record his actions. Then the app performs runs of the simulation with different parameters, captures the output and saves it. Then when all required simulation runs are finished, we perform the SA on the data we have: many tuples of the form (simulation parameters, corresponding simulation outputs).
+1. Show the application how to perform a single simulation run (the user's mouse and keyboard actions will be recorded).
+2. Define the simulation input parameters, sensitivity to which the application should analyze, and their corresponding domains (intervals $[min,\ max]$).
+3. Select the rectangular region (the Region of Interest) of the simulation software's output color-coded picture. The application will analyze the sensitivity of that image region to the simulation input parameters.
+4. Select which kind of sensitivity analysis to perform.
 
-Currently my app is planned to support 2 types of SA: calculating gradient at a given point (currently in the files it's referred to as "gradient-based") and calculating Sobol indices. Sobol indices are to be implemented by me, don't think about them now. Focus on gradient-based. So basically user gives a point in the parameter space (e.g. x1 = 1, x2 = 2, x3 = 3), and we want to calculate the gradient of the simulation function at that point and output the vector (df/dx1, df/dx2, df/dx3) at point (x1 = 1, x2 = 2, x3 = 3).
+as well as some other actions. When everything is set up, the application will replay user's mouse and keyboard actions to run the same simulation many times with different input parameter values and capture its output (the Region of Interest). After all the necessary simulation runs have been performed, the application will conduct the sensitivity analysis on the obtained simulation input-output pairs.
+
+You can find the full description of the application in the [Master's Thesis Report](Master_Thesis.pdf).
+
+## Demo Video
+
+A video demonstrating how to perform sensitivity analysis for the [SimFlow](https://sim-flow.com/) simulation software (the [Internal Pipe Flow example project](https://help.sim-flow.com/tutorials/pipe-flow)) was recorded and is available on YouTube:
+
+<p align="center">
+  <a href="https://youtu.be/j4gdeFOLOPc">
+    <img src="https://img.youtube.com/vi/j4gdeFOLOPc/maxresdefault.jpg" alt="Watch Video" width="700"/>
+  </a>
+</p>
+
+# Installation
+
+## Prerequisites
+- Python 3.13.13+ (developed and tested with Python 3.13.13)
+- pip
+- git
+
+## Steps
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/alekseilemberrwth/gui-sa-automation.git
+   ```
+
+2. **Create and activate a virtual environment** (recommended)
+
+   **Linux / macOS:**
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+3. **Install dependencies**
+   
+   **Linux / macOS:**
+   ```bash
+   pip install -r ./gui-sa-automation/requirements.txt
+   ```
+
+   **Windows (PowerShell):**
+   ```powershell
+   pip install -r gui-sa-automation/requirements.txt
+   ```
+
+## Launch
+
+Start the application:
+
+   **Linux / macOS:**
+   ```bash
+   python3 ./gui-sa-automation/main.py
+   ```
+
+   **Windows (PowerShell):**
+   ```powershell
+   python gui-sa-automation/main.py
+   ```
