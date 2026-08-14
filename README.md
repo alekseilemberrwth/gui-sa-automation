@@ -18,8 +18,8 @@ You can find the full description of the application in the [Master's Thesis Rep
 A video demonstrating how to perform sensitivity analysis for the [SimFlow](https://sim-flow.com/) simulation software (the [Internal Pipe Flow example project](https://help.sim-flow.com/tutorials/pipe-flow)) was recorded and is available on YouTube:
 
 <p align="center">
-  <a href="https://youtu.be/kp1RgoEh6Ws">
-    <img src="https://img.youtube.com/vi/kp1RgoEh6Ws/maxresdefault.jpg" alt="Watch Video" width="700"/>
+  <a href="https://youtu.be/j4gdeFOLOPc">
+    <img src="https://img.youtube.com/vi/j4gdeFOLOPc/maxresdefault.jpg" alt="Watch Video" width="700"/>
   </a>
 </p>
 
